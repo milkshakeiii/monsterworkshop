@@ -1,0 +1,15 @@
+# Build artifacts
+/target/
+
+# Layout pictures and image-model variants (tools/layout_by_model.py)
+/places/
+
+# Song and audio files stay out of the repo
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.m4a
+*.aac
+*.opus
+*.wma

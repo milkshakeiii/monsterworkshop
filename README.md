@@ -1,6 +1,6 @@
 # Monster Workshop
 
-Monsters push goods around a grid world, craft by standing at a work spot, and learn a job by watching you do it once. The feel prototype proved that core; M1 built the real economy on it, and M2 is adding the second town. Pinewater has the whole cotton cloth chain: harvest cotton, card it into slivers at the workbench, spin thread in the spinnery, weave fabric in the loom house. Every good carries real quality, variety, history and shares. See [`DESIGN.md`](DESIGN.md) for the full design. Rendering follows [`../AGENTS.md`](../AGENTS.md): 400x300 indexed 64-color VGA palette, exact integer scaling, F2 scanlines, 15 FPS ticks with 250 Hz input latching.
+Monsters push goods around a grid world, craft by standing at a work spot, and learn a job by watching you do it once. The feel prototype proved that core; M1 built the real economy on it, and M2 is adding the second town. Pinewater has the whole cotton cloth chain: harvest cotton, card it into slivers at the workbench, spin thread in the spinnery, weave fabric in the loom house. Every good carries real quality, variety, history and shares. See [`DESIGN.md`](DESIGN.md) for the full design. Rendering follows [`AGENTS.md`](AGENTS.md): 400x300 indexed 64-color VGA palette, exact integer scaling, F2 scanlines, 15 FPS ticks with 250 Hz input latching.
 
 The rules and tech tree came from the earlier `django` and `sokobanmonstermakers` versions; they now live here.
 

@@ -14,15 +14,15 @@ if (-not $hcloud) {
         Select-Object -First 1 -ExpandProperty FullName
 }
 $ip = (& $hcloud server ip $Server).Trim()
-$repo = Split-Path (Split-Path (Split-Path $PSScriptRoot))
+$repo = Split-Path (Split-Path $PSScriptRoot)
 
 $head = git -C $repo log -1 --format='%h %s'
 "Deploying $head to $Server ($ip)."
-if (git -C $repo status --porcelain -- monsterworkshop) { 'Uncommitted changes stay here.' }
+if (git -C $repo status --porcelain) { 'Uncommitted changes stay here.' }
 
 $tar = Join-Path $env:TEMP 'mw.tar.gz'
 $sh = Join-Path $env:TEMP 'remote.sh'
-git -C $repo -c core.autocrlf=false archive --format=tar.gz -o $tar HEAD monsterworkshop
+git -C $repo -c core.autocrlf=false archive --format=tar.gz --prefix=monsterworkshop/ -o $tar HEAD
 [IO.File]::WriteAllText($sh, ((Get-Content -Raw "$PSScriptRoot\remote.sh") -replace "`r`n", "`n"))
 
 $opts = @('-i', $Key, '-o', 'StrictHostKeyChecking=accept-new', '-o', 'BatchMode=yes')
