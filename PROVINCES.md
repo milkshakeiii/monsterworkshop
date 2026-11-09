@@ -228,6 +228,14 @@ Henry approved the second draft as drawn on 2026-11-05; the table above follows 
 - **A tool weighs what its material weighs** (Henry): the basket weighs as its sticks. The basket, and then a silver knife too heavy for a cyclops, led to weight slowing a monster rather than refusing it (DESIGN.md, Weight, not capacity).
 - **New scenery:** the gulch's walls (rock that joins up as cliffs do), the prospector's tent and the campfire.
 
+### Pushes alone (2026-11-08)
+Henry: no pull should be forced by the lie of the land (see DESIGN.md, Pushing and pulling). In the hills that moved:
+- **Verdigris:** the smithy turned over: its pads in a row along its south wall, an aisle two deep above them, goods in by its north door from the road, its mat below its anvil and out by a south door; the grindstone a tile west so what it makes is pushed down the street. The trough by the anvil outside moved a tile west, so its west pad is fed from the road.
+- **Verdigris East:** the pick and shovel bins each a tile east, so a spare is pushed in from the side and what comes out of a chute is pushed clear of the hedge.
+- **Hemp Hollow:** the hemp house a row taller and a column wider, its pads on an aisle two deep, goods in by a door at its southeast, its mat by a door at its southwest.
+- **Bellows:** the ore vine and the charcoal vine each run a tile further from their cliffs, so what they set down is pushed away from the cliff; the slag by the pond, the lantern in the yard and the trough by the road made way (the trough is by the cliff's foot now); a gap in the yard wall below the lower smelter's mat.
+- **Alum Springs:** the boiling house a row taller, with two doors: goods in by one, out from its mat by the other.
+
 ### Metals, from ore to edge (agreed 2026-11-05)
 Metalworking was thin at the start (the ingots were stand-ins from the trader, and there was no iron) and flat in the middle (ten tools on nearly one recipe). This batch fills it in from the book's chapters on the five metals, hammer forging and casting: 23 goods, all but wrought iron, steel and the iron forceps asked for by recipes already in the trees. Henry approved it on 2026-11-05, wrought iron, steel and the tool-life numbers included, and it's in the data (`data/good_types.json`) with tool life and the cards that teach it; the smelter and smithy, the goods' art, and the smith's and assay office's words come with the hills (the smithy and the smith's words came with Verdigris, 2026-11-05). The die and mirror molds aren't missing after all: the sand mold takes its pattern's name.
 

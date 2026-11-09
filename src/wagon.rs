@@ -172,6 +172,7 @@ impl Game {
                 || self.applicant_at(x, y)
                 || self.rack_at(x, y).is_some()
                 || self.world.choice_at(x, y).is_some()
+                || self.world.poster_at(x, y).is_some()
                 || item.is_some_and(|k| crate::frontier::kit_kind(self.world.items[k].good()).is_some())
             {
                 return 2;
@@ -246,18 +247,23 @@ impl Game {
         (wagon.pumpkin, wagon.at) = (from, pumpkin);
     }
 
-    /// A good pushed into a wagon's bed, if it fits: the same kind of good as already there,
-    /// and room for it.
-    pub(crate) fn load_wagon(&mut self, w: usize, it: usize, hauler: u32) -> Result<(), String> {
-        let good = self.world.items[it].good().to_string();
+    /// Whether wagon `w`'s bed takes a good of this kind now: the same kind as already there,
+    /// and room for it. If not, why not.
+    pub(crate) fn wagon_takes(&self, w: usize, good: &str) -> Result<(), String> {
         let wagon = &self.world.wagons[w];
         if let Some(have) = wagon.good().filter(|g| *g != good) {
             return Err(format!("THE WAGON IS CARRYING {}.", self.good_name(have)));
         }
         let used = econ::total(wagon.stock.iter().map(|(d, _)| self.data.good(&d.good).storage_volume));
-        if used + self.data.good(&good).storage_volume > self.wagon_room(w) + 1e-9 {
+        if used + self.data.good(good).storage_volume > self.wagon_room(w) + 1e-9 {
             return Err("THE WAGON IS FULL.".into());
         }
+        Ok(())
+    }
+
+    /// A good pushed into a wagon's bed, if it takes it (see `wagon_takes`).
+    pub(crate) fn load_wagon(&mut self, w: usize, it: usize, hauler: u32) -> Result<(), String> {
+        self.wagon_takes(w, self.world.items[it].good())?;
         let mut item = self.world.items.remove(it);
         item.data.hauled_by(hauler);
         let wagon = &mut self.world.wagons[w];

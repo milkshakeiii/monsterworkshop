@@ -53,6 +53,13 @@ impl Connection {
         (self.send)(bytes)
     }
 
+    /// Sends a cheat line (see `cheat.rs`).
+    pub fn cheat(&mut self, line: &str) -> io::Result<()> {
+        let mut bytes = Vec::new();
+        ToServer::Cheat(line.into()).write(&mut bytes)?;
+        (self.send)(bytes)
+    }
+
     /// Everything that has arrived since last asked. An error means the connection is gone.
     pub fn messages(&self) -> Vec<io::Result<ToPlayer>> {
         self.incoming.try_iter().collect()

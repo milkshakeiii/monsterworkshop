@@ -26,10 +26,9 @@ const PLAN_STATES: usize = 20_000;
 pub(crate) type CarryStep = (Dir, bool);
 
 impl Game {
-    /// Is this tile where the good is meant to end up a bin, board or wagon that takes it?
-    /// Why the board or bin at `(x, y)` won't take `good` now, if it won't: an order filled
-    /// and resting, a bell hanging, the wrong kind, a full bin. Said the same to a player pushing
-    /// one in and by a loop waiting to.
+    /// Why the board, bin or wagon at `(x, y)` won't take `good` now, if it won't: an order
+    /// filled and resting, a bell hanging, the wrong kind, a full bin or wagon. Said the same to
+    /// a player pushing one in and by a loop waiting to.
     pub(crate) fn wont_take(&self, (x, y): (i32, i32), good: &str) -> Option<String> {
         if let Some(b) = self.world.board_at(x, y) {
             let board = &self.world.boards[b];
@@ -42,13 +41,17 @@ impl Game {
             }
             return (!self.board_takes(b, good)).then(|| format!("THE BOARD WANTS {}.", self.good_name(&board.wants)));
         }
+        if let Some(w) = self.world.wagon_at(x, y) {
+            return self.wagon_takes(w, good).err();
+        }
         self.world.bin_at(x, y).and_then(|b| self.bin_takes(b, good).err())
     }
 
+    /// Is this tile where the good is meant to end up a bin, board or wagon that takes it?
     pub(crate) fn takes_into(&self, (x, y): (i32, i32), good: &str) -> bool {
         self.world.bin_at(x, y).is_some_and(|b| self.bin_takes(b, good).is_ok())
             || self.world.board_at(x, y).is_some_and(|b| !self.world.boards[b].done() && self.board_takes(b, good))
-            || self.world.wagon_at(x, y).is_some_and(|w| self.world.wagons[w].good().is_none_or(|g| g == good))
+            || self.world.wagon_at(x, y).is_some_and(|w| self.wagon_takes(w, good).is_ok())
     }
 
     /// The cheapest pushes and pulls that bring the good at `from` to `to`, for a monster
@@ -213,6 +216,11 @@ impl Game {
         }
         if self.world.items[k].locked {
             return Going::Waiting("THAT'S BEING WORKED ON.".into());
+        }
+        // A wagon that filled up (or took another good) on the way: wait with it here, rather
+        // than leave it lying by the wagon.
+        if let Some(why) = self.world.wagon_at(to.0, to.1).and_then(|w| self.wagon_takes(w, self.world.items[k].good()).err()) {
+            return Going::Waiting(why);
         }
         if let Some(o) = self.world.item_at(to.0, to.1).filter(|&o| o != k && !self.world.items[o].locked) {
             let name = self.good_name(self.world.items[o].good());

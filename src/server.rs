@@ -29,6 +29,7 @@ const MAX_DRAWING: usize = 8;
 enum Event {
     Hello { protocol: u32, key: String },
     Keys(Input),
+    Cheat(String),
     Gone,
 }
 
@@ -62,6 +63,10 @@ pub struct Server {
     /// How often `run` prints a report, if it does.
     report_every: Option<Duration>,
     stats: Stats,
+    /// Whether players' cheats are taken (a world played alone), and those typed since the
+    /// last tick, by commune.
+    cheats: bool,
+    cheated: Vec<(usize, String)>,
 }
 
 /// How the server has kept up since its last report.
@@ -86,12 +91,18 @@ impl Server {
         listener.set_nonblocking(true)?;
         let drawing = std::thread::available_parallelism().map_or(1, |n| n.get()).min(MAX_DRAWING);
         let fbs = (0..drawing).map(|_| Framebuffer::new()).collect();
-        Ok(Server { game, path, listener, players: Vec::new(), events: mpsc::channel(), next_id: 0, sprites: Sprites::new(), fbs, since_save: 0, report_every: None, stats: Stats::new() })
+        Ok(Server { game, path, listener, players: Vec::new(), events: mpsc::channel(), next_id: 0, sprites: Sprites::new(), fbs, since_save: 0, report_every: None, stats: Stats::new(), cheats: false, cheated: Vec::new() })
     }
 
     /// Prints a report on how it's keeping up this often while it runs.
     pub fn reporting(mut self, every: Duration) -> Server {
         self.report_every = Some(every);
+        self
+    }
+
+    /// Takes players' cheats (see `cheat.rs`): for a world played alone.
+    pub fn allowing_cheats(mut self) -> Server {
+        self.cheats = true;
         self
     }
 
@@ -146,8 +157,8 @@ impl Server {
         }
     }
 
-    /// One tick: new players, everyone's keys, the world, everyone's screens, and an autosave
-    /// now and then.
+    /// One tick: new players, everyone's keys, the world, cheats, everyone's screens, and an
+    /// autosave now and then.
     pub fn tick(&mut self) {
         let start = Instant::now();
         self.accept();
@@ -160,6 +171,10 @@ impl Server {
             }
         }
         self.game.update(&inputs);
+        // After the world's tick, so what they say and the sounds they make are heard.
+        for (k, line) in std::mem::take(&mut self.cheated) {
+            self.game.cheat(k, &line, self.cheats);
+        }
         // Players who've said they're leaving go back to their title screens.
         for i in (0..self.players.len()).rev() {
             if let Some(k) = self.players[i].commune.filter(|&k| self.game.communes[k].left) {
@@ -218,6 +233,11 @@ impl Server {
                     let p = &mut self.players[i];
                     p.keys = p.keys.or(&inp);
                     p.held = net::held_part(&inp);
+                }
+                Event::Cheat(line) => {
+                    if let Some(k) = self.players[i].commune {
+                        self.cheated.push((k, line));
+                    }
                 }
                 Event::Gone => self.let_go(i, ""),
             }
@@ -294,6 +314,7 @@ fn listen(id: u64, stream: TcpStream, events: Sender<(u64, Event)>) {
         let e = match ToServer::read(&mut r) {
             Ok(ToServer::Hello { protocol, key }) => Event::Hello { protocol, key },
             Ok(ToServer::Keys(inp)) => Event::Keys(inp),
+            Ok(ToServer::Cheat(line)) => Event::Cheat(line),
             Err(_) => Event::Gone,
         };
         let gone = matches!(e, Event::Gone);
@@ -320,10 +341,12 @@ mod tests {
     use super::*;
     use crate::client::Connection;
 
-    /// Ticks the server until `done`, a second at most.
+    /// Ticks the server until `done`, a second at most. Every player here has read their
+    /// welcome already (the game's tests check it).
     fn tick_until(s: &mut Server, mut done: impl FnMut(&mut Server) -> bool) {
         for _ in 0..200 {
             s.tick();
+            s.game.communes.iter_mut().for_each(|c| c.welcome = false);
             if done(s) {
                 return;
             }
@@ -368,6 +391,25 @@ mod tests {
                 }
                 ToPlayer::Bye(why) => s.bye = Some(why),
             }
+        }
+    }
+
+    #[test]
+    fn only_a_server_allowing_cheats_takes_them() {
+        for allowed in [false, true] {
+            let mut s = if allowed { server().allowing_cheats() } else { server() };
+            let mut a = Connection::connect(s.addr(), "key-a", Duration::ZERO).unwrap();
+            let mut sa = seen();
+            tick_until(&mut s, |_| {
+                take(&a, &mut sa);
+                sa.commune.is_some()
+            });
+            let (k, before) = (sa.commune.unwrap(), s.game.world.items.len());
+            let c = s.game.communes[k].controlled;
+            a.cheat("copper ore").unwrap();
+            let said = if allowed { "CHEAT: 1 COPPER ORE." } else { "CHEATS ONLY WORK IN A WORLD PLAYED ALONE." };
+            tick_until(&mut s, |s| s.game.monsters[c].bubble.as_ref().is_some_and(|b| b.text == said));
+            assert_eq!(s.game.world.items.len(), before + allowed as usize);
         }
     }
 

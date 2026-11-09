@@ -224,6 +224,9 @@ pub fn card(g: &Game, k: usize) -> Card {
     if let Some((l, _)) = g.world.vine_end(fx, fy) {
         return vine_card(g, l, (fx, fy));
     }
+    if let Some(t) = g.world.poster_at(fx, fy) {
+        return poster_card(g, t, (fx, fy), k);
+    }
     if let Some((_, prop)) = g.world.prop_at(fx, fy) {
         return prop_card(g, prop, (fx, fy));
     }
@@ -375,6 +378,22 @@ fn vine_line(g: &Game, (x, y): (i32, i32)) -> Option<Line> {
         Some(full) => line(full, TEXT_WARN).icon(Icon::Warn),
         None => line(format!("THE {} TAKES IT NEXT, {}.", lift.name, vine_way(g, l)), TEXT_DIM),
     })
+}
+
+/// A tutorial's poster: what it teaches and where commune `k`'s player is with it, then its steps.
+fn poster_card(g: &Game, t: usize, at: (i32, i32), k: usize) -> Card {
+    let topic = &crate::tutorial::TOPICS[t];
+    let me = &g.communes[k].tutorial;
+    let first = vec![
+        line(topic.about, TEXT),
+        match me.on {
+            Some((on, step)) if on == t => line(format!("YOU'RE ON STEP {} OF {}. SPACE PUTS IT ASIDE.", step + 1, topic.steps.len()), TEXT_GOOD),
+            _ if me.done.contains(&t) => line("YOU'VE BEEN THROUGH THIS ONE.", TEXT_GOOD),
+            _ => line("SPACE TAKES IT UP: ITS STEPS SHOW AT THE BOTTOM, ONE AT A TIME.", TEXT_DIM),
+        },
+    ];
+    let steps = topic.steps.iter().enumerate().map(|(n, s)| line(format!("{}. {s}", n + 1), if me.on == Some((t, n)) { TEXT } else { TEXT_DIM })).collect();
+    Card::two(format!("POSTER: {}", topic.title), first, steps, at)
 }
 
 fn prop_card(g: &Game, prop: Prop, at: (i32, i32)) -> Card {

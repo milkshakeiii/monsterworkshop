@@ -69,8 +69,9 @@ fn harvesting_pops_a_boll_and_teaches_the_harvester() {
 #[test]
 fn the_whole_chain_makes_cotton_fabric_with_a_full_history() {
     let mut g = Game::new().without_town();
+    g.communes[0].tutorial.on = Some((tutorial::CLOTH, 0));
     g.script(MOGG_HARVEST);
-    assert_eq!(g.communes[0].tutorial.stage, 3, "harvested and binned");
+    assert_eq!(g.communes[0].tutorial.on, Some((tutorial::CLOTH, 2)), "harvested and binned");
     g.script("t");
     g.run_ticks(10);
     g.script(&bruna_chain());
@@ -91,12 +92,90 @@ fn the_whole_chain_makes_cotton_fabric_with_a_full_history() {
     let earned: f64 = g.monsters.iter().map(|m| m.earned).sum();
     assert!((earned - paid).abs() < 1e-9 && g.monsters.iter().all(|m| m.earned > 0.0), "credit split between both");
     assert!(g.floaters.iter().any(|f| f.text.contains("RENOWN")), "a renown celebration rises");
-    assert_eq!(g.communes[0].tutorial.stage, 7);
+    assert!(g.communes[0].tutorial.on.is_none() && g.communes[0].tutorial.done.contains(&tutorial::CLOTH), "the cloth tutorial is done");
+}
+
+/// The first player's monster in front of tutorial `t`'s poster, out of doors, facing it.
+fn at_the_poster(g: &mut Game, t: usize) -> (i32, i32) {
+    let &(at, _) = g.world.posters.iter().find(|p| p.1 == t).expect("a poster");
+    let (front, facing) = g.world.poster_front(at).expect("read from out of doors");
+    let c = g.communes[0].controlled;
+    let m = &mut g.monsters[c];
+    (m.x, m.y, m.facing) = (front.0, front.1, facing);
+    at
+}
+
+/// Henry, 2026-11-08: tutorials are posters on building walls, each taken up with Space and
+/// followed a step at a time in the HUD, all of them optional.
+#[test]
+fn a_poster_takes_up_its_tutorial_skips_whats_done_and_puts_it_aside() {
+    let mut g = Game::live();
+    assert!(g.communes[0].tutorial.on.is_none(), "nothing until a poster is taken up");
+    let at = at_the_poster(&mut g, tutorial::CLOTH);
+    let card = crate::inspect::card(&g, 0);
+    assert_eq!(card.title, "POSTER: MAKING CLOTH");
+    assert!(card.pages[1][0].text.starts_with("1. STAND ON A RIPE COTTON PLANT"), "its steps, on the card's next page");
+    g.script("u");
+    assert_eq!(g.communes[0].tutorial.on, Some((tutorial::CLOTH, 0)));
+    assert!(g.monsters[0].bubble.as_ref().is_some_and(|b| b.text.starts_with("TUTORIAL: MAKING CLOTH")));
+    assert_eq!(g.world.poster_at(at.0, at.1), Some(tutorial::CLOTH));
+    // Done already, it skips ahead.
+    g.communes[0].made.insert("cotton_bolls".into());
+    g.run_ticks(1);
+    assert_eq!(g.communes[0].tutorial.on, Some((tutorial::CLOTH, 1)), "harvested already");
+    // Space again puts it aside; another poster takes another up instead.
+    g.script("u");
+    assert!(g.communes[0].tutorial.on.is_none());
+    at_the_poster(&mut g, tutorial::HELPERS);
+    g.script("u");
+    assert_eq!(g.communes[0].tutorial.on, Some((tutorial::HELPERS, 0)));
+    // Its last step met, it's done, and Mogg says so.
+    g.monsters[0].bubble = None;
+    let k = g.monsters.iter().position(|m| m.commune != 0).unwrap_or(0);
+    g.monsters[k].commune = 0;
+    g.run_ticks(1);
+    assert!(g.communes[0].tutorial.on.is_none() && g.communes[0].tutorial.done.contains(&tutorial::HELPERS));
+    assert!(g.monsters[0].bubble.as_ref().is_some_and(|b| b.text == "THAT'S HELPERS DONE!"), "{:?}", g.monsters[0].bubble.as_ref().map(|b| &b.text));
+}
+
+/// Every tutorial has a poster, each on the outside of a building's wall, read from the street,
+/// and never where the building's name is written.
+#[test]
+fn every_tutorial_has_a_poster_read_from_out_of_doors() {
+    let g = Game::live();
+    for t in 0..tutorial::TOPICS.len() {
+        let posters: Vec<(i32, i32)> = g.world.posters.iter().filter(|p| p.1 == t).map(|p| p.0).collect();
+        assert_eq!(posters.len(), 1, "{}", tutorial::TOPICS[t].title);
+        let at = posters[0];
+        let front = g.world.poster_front(at);
+        assert!(g.world.tile(at.0, at.1) == Tile::Wall && front.is_some_and(|(p, _)| outdoors(&g, p)), "{}'s poster at {at:?}", tutorial::TOPICS[t].title);
+        for (label, wy, span) in crate::render::building_labels(&g) {
+            let half = crate::framebuffer::Framebuffer::text_width(label, 1) / 2;
+            assert!(wy != at.1 || !crate::render::label_covers(span, half).contains(&at.0), "{}'s poster covers {label}", tutorial::TOPICS[t].title);
+        }
+    }
+}
+
+/// A new player is welcomed once: any key closes it and does nothing else.
+#[test]
+fn a_new_player_is_welcomed_and_any_key_closes_it() {
+    let mut g = Game::new();
+    let k = g.player("newcomer");
+    assert!(g.communes[k].welcome);
+    let c = g.communes[k].controlled;
+    let at = (g.monsters[c].x, g.monsters[c].y);
+    g.press(k, Input { pressed: [false, false, false, true], held: [false, false, false, true], ..Input::default() });
+    g.press(k, Input::default());
+    assert!(!g.communes[k].welcome);
+    assert_eq!((g.monsters[c].x, g.monsters[c].y), at, "the key only closed it");
+    let again = g.player("newcomer");
+    assert!(again == k && !g.communes[k].welcome, "a returning player isn't welcomed again");
 }
 
 #[test]
 fn two_monsters_loop_the_chain_on_their_own() {
     let mut g = Game::new();
+    g.communes[0].tutorial.on = Some((tutorial::LOOPS, 0));
     g.script(MOGG_HARVEST);
     g.script(MOGG_HOME);
     g.script(&format!("r{MOGG_HARVEST}{MOGG_HOME}rp"));
@@ -105,7 +184,7 @@ fn two_monsters_loop_the_chain_on_their_own() {
     g.run_ticks(10);
     g.script(&format!("r{}{}rp", bruna_chain(), bruna_home()));
     assert!(g.monsters[1].playing);
-    assert!(tutorial::STAGES[g.communes[0].tutorial.stage].contains("GATHERING HALL"), "next the tutorial asks you to welcome a helper");
+    assert!(g.communes[0].tutorial.done.contains(&tutorial::LOOPS), "the loops tutorial is done");
 
     let before = g.cloth_stored();
     g.run_ticks(6000);
@@ -624,6 +703,36 @@ fn a_recorded_wagon_loop_leads_it_there_and_back_and_lets_go() {
     g.script("p");
     g.run_ticks(1500);
     assert!(g.monsters[0].playing && g.monsters[0].loops >= 2, "looped {} times: {}", g.monsters[0].loops, g.monsters[0].wait_reason);
+}
+
+/// A loop pushing fabric into a parked wagon until it's full (Henry, 2026-11-08: the fabric ended
+/// up lined up by the wagon). Fabric is set out in a pile behind it whenever the pile is clear;
+/// returns the loose fabric left within three tiles of the wagon (the pile's not counted).
+fn fill_the_wagon(g: &mut Game, room: f64, ticks: u32) -> Vec<(i32, i32)> {
+    let w = &g.world.wagons[0];
+    let (bed, back) = (w.at, w.behind());
+    let (dx, dy) = (back.0 - bed.0, back.1 - bed.1);
+    let pile = (back.0 + dx, back.1 + dy);
+    g.world.wagons[0].room = room;
+    let goals = vec![Goal::Move { good: "fabric".into(), from: pile, to: bed }];
+    start_loop(g, 0, Routine { flag: (pile.0 + dx, pile.1 + dy), goals }, (pile.0 + dx, pile.1 + dy));
+    for _ in 0..ticks {
+        let me = (g.monsters[0].x, g.monsters[0].y);
+        if g.world.item_at(pile.0, pile.1).is_none() && me != pile {
+            g.world.items.push(Item::new(pile.0, pile.1, good_like(&g.data, "fabric", 0.8)));
+        }
+        g.update(&[]);
+    }
+    g.world.items.iter().filter(|it| it.good() == "fabric" && (it.x, it.y) != pile && (it.x - bed.0).abs().max((it.y - bed.1).abs()) <= 3).map(|it| (it.x, it.y)).collect()
+}
+
+#[test]
+fn a_loop_filling_a_wagon_stops_when_its_full_and_says_so() {
+    let mut g = Game::new();
+    let loose = fill_the_wagon(&mut g, 0.6, 3000);
+    assert_eq!(g.world.wagons[0].stock.len(), 3, "filled");
+    assert!(loose.is_empty(), "nothing left lying by the wagon: {loose:?}");
+    assert!(g.monsters[0].wait_reason.contains("THE WAGON IS FULL"), "{}", g.monsters[0].wait_reason);
 }
 
 #[test]
@@ -2338,6 +2447,120 @@ fn a_vines_card_says_where_it_goes_whats_on_it_and_what_holds_it_up() {
 /// what it set down on past its head, so there's open ground on both sides of it. The ore vine's
 /// landing in Bellows had a lantern post on its west, so ore set down there could only be pulled,
 /// the slow way; the post stands by the assay office now.
+/// Sokoban on the bare map, within `reach` tiles of `around`: walls, props and parked wagons are
+/// in the way (plants aren't: monsters stand on them, and goods go over them), and where `pads_filled`, every pad but `open` is taken (filled
+/// already). Can pushes alone bring a good from one of `from`, the monster beside it, to a tile
+/// where `done`?
+fn pushes_alone(g: &Game, around: (i32, i32), reach: i32, from: &[(i32, i32)], done: impl Fn((i32, i32)) -> bool, pads_filled: bool, open: Option<(i32, i32)>) -> bool {
+    let w = &g.world;
+    let inside = |p: (i32, i32)| (p.0 - around.0).abs() <= reach && (p.1 - around.1).abs() <= reach;
+    let filled = |p: (i32, i32)| pads_filled && Some(p) != open && w.shops.iter().any(|s| s.pads.contains(&p));
+    let blocked = |p: (i32, i32)| w.cart_at(p.0, p.1) || filled(p);
+    let walks = |p: (i32, i32), good: (i32, i32)| inside(p) && p != good && w.walkable(p.0, p.1) && !blocked(p);
+    let rests = |p: (i32, i32)| inside(p) && w.item_floor(p.0, p.1) && !blocked(p) && !w.shops.iter().any(|s| s.outs.contains(&p) || s.pegs.contains(&p));
+    let mut seen = std::collections::HashSet::new();
+    let mut queue = std::collections::VecDeque::new();
+    for &b in from {
+        for d in DIRS {
+            let side = (b.0 + d.delta().0, b.1 + d.delta().1);
+            if walks(side, b) && seen.insert((b, side)) {
+                queue.push_back((b, side));
+            }
+        }
+    }
+    while let Some((good, me)) = queue.pop_front() {
+        if done(good) {
+            return true;
+        }
+        let mut reached = std::collections::HashSet::from([me]);
+        let mut walk = vec![me];
+        while let Some(q) = walk.pop() {
+            for d in DIRS {
+                let n = (q.0 + d.delta().0, q.1 + d.delta().1);
+                if walks(n, good) && reached.insert(n) {
+                    walk.push(n);
+                }
+            }
+        }
+        for d in DIRS {
+            let (dx, dy) = d.delta();
+            let (behind, ahead) = ((good.0 - dx, good.1 - dy), (good.0 + dx, good.1 + dy));
+            if reached.contains(&behind) && (rests(ahead) || done(ahead) && inside(ahead)) && seen.insert((ahead, good)) {
+                queue.push_back((ahead, good));
+            }
+        }
+    }
+    false
+}
+
+/// Open ground a good can be pushed every way from: it and all four tiles round it out of doors
+/// and clear. A good that gets there can go on anywhere; one that can't is stuck by a wall or a
+/// cliff, however far it went along it.
+fn crossroads(g: &Game, p: (i32, i32)) -> bool {
+    let w = &g.world;
+    let clear = |q: (i32, i32)| outdoors(g, q) && w.item_floor(q.0, q.1) && !w.cart_at(q.0, q.1) && !w.shops.iter().any(|s| s.pads.contains(&q) || s.outs.contains(&q) || s.pegs.contains(&q));
+    clear(p) && DIRS.iter().all(|d| clear((p.0 + d.delta().0, p.1 + d.delta().1)))
+}
+
+/// Out of doors: open ground, a road, a square.
+fn outdoors(g: &Game, p: (i32, i32)) -> bool {
+    matches!(g.world.tile(p.0, p.1), Tile::Grass | Tile::Path | Tile::Paving | Tile::Gravel | Tile::Boards | Tile::Sinter)
+}
+
+/// Henry, 2026-11-08: no pull should be forced by the lie of the land. Every workshop's pads take
+/// a good pushed in from out of doors by pushes alone, whichever are filled first; and what it
+/// makes is pushed out of doors from its mat the same way, with all its pads filled: in from,
+/// and out to, open ground (`crossroads`), so a good stuck on the road by the door doesn't
+/// count.
+#[test]
+fn every_workshop_is_worked_by_pushes_alone() {
+    let g = Game::live();
+    const REACH: i32 = 12;
+    let mut shut: Vec<String> = Vec::new();
+    for s in &g.world.shops {
+        let place = |p: (i32, i32)| format!("{}'S {{}} {p:?} IN {}", s.kind.label(), crate::world::area_name(p.0, p.1));
+        for &pad in &s.pads {
+            let from: Vec<(i32, i32)> = (-REACH..=REACH).flat_map(|dy| (-REACH..=REACH).map(move |dx| (pad.0 + dx, pad.1 + dy))).filter(|&p| crossroads(&g, p)).collect();
+            if !pushes_alone(&g, pad, REACH, &from, |p| p == pad, true, Some(pad)) {
+                shut.push(place(pad).replace("{}", "PAD"));
+            }
+        }
+        for &out in &s.outs {
+            if !pushes_alone(&g, out, REACH, &[out], |p| crossroads(&g, p), true, None) {
+                shut.push(place(out).replace("{}", "MAT"));
+            }
+        }
+    }
+    assert!(shut.is_empty(), "only a pull works:\n{}", shut.join("\n"));
+}
+
+/// The same for everywhere else goods go in or come out: bins and project boards take a good
+/// pushed in from out of doors, a vine's foot too; what a vine sets down at its head, what a bin
+/// lets out of its chute and what a townsperson's supply sets out are pushed off to open ground
+/// (or onto the pad it feeds: a chute beside a bench).
+#[test]
+fn every_bin_board_vine_and_supply_is_worked_by_pushes_alone() {
+    let g = Game::live();
+    const REACH: i32 = 12;
+    let w = &g.world;
+    let around = |to: (i32, i32)| -> Vec<(i32, i32)> { (-REACH..=REACH).flat_map(|dy| (-REACH..=REACH).map(move |dx| (to.0 + dx, to.1 + dy))).filter(|&p| crossroads(&g, p)).collect() };
+    let into = w.bins.iter().map(|b| ((b.x, b.y), "BIN")).chain(w.boards.iter().map(|b| ((b.x, b.y), "BOARD"))).chain(w.lifts.iter().map(|l| (l.foot, "VINE'S FOOT")));
+    let out_of = w.lifts.iter().map(|l| (l.top, "VINE'S HEAD")).chain(w.bins.iter().filter_map(|b| b.mouth.map(|m| (m, "CHUTE")))).chain(w.supplies.iter().map(|s| (s.at, "SUPPLY")));
+    let mut shut: Vec<String> = Vec::new();
+    for (to, what) in into {
+        let from = around(to);
+        if !pushes_alone(&g, to, REACH, &from, |p| p == to, true, None) {
+            shut.push(format!("{what} {to:?} IN {}", crate::world::area_name(to.0, to.1)));
+        }
+    }
+    for (at, what) in out_of {
+        if !pushes_alone(&g, at, REACH, &[at], |p| crossroads(&g, p), false, None) {
+            shut.push(format!("{what} {at:?} IN {}", crate::world::area_name(at.0, at.1)));
+        }
+    }
+    assert!(shut.is_empty(), "only a pull works:\n{}", shut.join("\n"));
+}
+
 #[test]
 fn every_vines_head_has_open_ground_on_both_sides() {
     let g = Game::new();

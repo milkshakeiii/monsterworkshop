@@ -6,6 +6,7 @@ use crate::data::{matches, Data};
 use crate::econ::ItemData;
 pub use crate::workshops::ShopKind;
 use crate::palette::Style;
+use crate::tutorial;
 use serde::{Deserialize, Serialize};
 
 pub const TS: i32 = 16;
@@ -84,6 +85,9 @@ struct Region {
     vines: &'static [((i32, i32), Dir, &'static str)],
     /// Goods lying about when a world begins: where, the good, and what it's plainly made from.
     goods: &'static [((i32, i32), &'static str, &'static str)],
+    /// Tutorial posters on its buildings' walls: where (region coordinates), and which tutorial
+    /// (`tutorial::TOPICS`).
+    posters: &'static [((i32, i32), usize)],
 }
 
 /// A working townsperson as a region's data gives them: a monster of the town's on a loop at a
@@ -218,7 +222,7 @@ const fn water_prop(id: &'static str, ch: char, name: &'static str, about: &'sta
 /// awning over a shop's door, the hillside, the cliff and its vine, hemp's drying racks, the
 /// parapet and the yard wall join their neighbors of the same kind; the rest is drawn whole on its tiles. The map marks newer kinds with characters past
 /// plain ASCII, which ran out (2026-11-04).
-pub const PROPS: [PropKind; 113] = [
+pub const PROPS: [PropKind; 114] = [
     PropKind { shows: Some("wagon_wheel"), ..prop("wheels", 'Q', "SPARE WAGON WHEELS", "FINISHED, WAITING FOR A CART.", (1, 1)) },
     PropKind { shows: Some("wagon_kit"), ..prop("cart", 'y', "A CART, HALF BUILT", "IT'S WAITING FOR ITS WHEELS.", (1, 1)) },
     prop("fence", 'x', "A FENCE", "AROUND A YARD. WALK IN BY ITS GATE.", (1, 1)),
@@ -258,6 +262,8 @@ pub const PROPS: [PropKind; 113] = [
     prop("pond", ')', "A LILY POND", "STILL WATER AND LILIES. THE BELL'S RINGING CARRIES ACROSS IT.", (3, 3)),
     prop("cherry_tree", '`', "A CHERRY TREE", "IN THE TEMPLE'S GARDEN IT BLOSSOMS ALL YEAR.", (2, 2)),
     wall_prop("banner", '7', "A BANNER", "FOR THE BELLS THAT HAVE HUNG HERE.", 10),
+    // A tutorial's poster (2026-11-08): placed by its region's data, never by the map.
+    wall_prop("poster", 'ǝ', "A POSTER", "IT TEACHES ONE THING. FACE IT AND PRESS SPACE.", 0),
     prop("cushion", '3', "A CUSHION", "FOR SITTING AND LISTENING.", (1, 1)),
     prop("candle", '4', "A CANDLE STAND", "KEPT LIT.", (1, 1)),
     prop("drum", '5', "A DRUM", "IT ANSWERS THE BELL.", (1, 1)),
@@ -364,6 +370,7 @@ const PINEWATER_TESTS: Region = Region {
     racks: &[],
     folk: &[],
     vines: &[],
+    posters: &[],
     goods: &[],
     labels: &[((5, 19), "GATHERING HALL"), ((25, 27), "OLD SAWGRASS"), ((16, 18), "OLD SPOKE'S YARD")],
     signs: &[("TANGLEMERE", Dir::Right)],
@@ -400,6 +407,7 @@ const REGIONS: [Region; 15] = [
         racks: &[],
         folk: &[],
         vines: &[],
+        posters: &[((10, 12), tutorial::CLOTH), ((10, 13), tutorial::HELPERS), ((29, 8), tutorial::LOOPS), ((45, 8), tutorial::FOOTBRIDGE), ((45, 24), tutorial::WAGONS), ((33, 24), tutorial::KITS)],
         goods: &[],
         labels: &[((2, 11), "GATHERING HALL"), ((25, 27), "OLD SAWGRASS"), ((19, 18), "OLD SPOKE'S YARD")],
         signs: &[("TANGLEMERE", Dir::Right)],
@@ -416,6 +424,7 @@ const REGIONS: [Region; 15] = [
         racks: &[],
         folk: &[],
         vines: &[],
+        posters: &[],
         goods: &[],
         supplies: &[],
         workers: &[],
@@ -450,6 +459,7 @@ const REGIONS: [Region; 15] = [
         ],
         folk: &[((43, 13), Folk::Outfitter)],
         vines: &[],
+        posters: &[((19, 7), tutorial::DYEING)],
         goods: &[],
         labels: &[((39, 2), "CLOTH HALL"), ((46, 10), "OUTFITTER")],
         signs: &[("PINEWATER", Dir::Left)],
@@ -483,6 +493,7 @@ const REGIONS: [Region; 15] = [
         ],
         folk: &[((15, 26), Folk::Keeper)],
         vines: &[],
+        posters: &[],
         goods: &[],
         labels: &[((12, 22), "TEMPLE")],
         signs: &[],
@@ -501,6 +512,7 @@ const REGIONS: [Region; 15] = [
         racks: &[],
         folk: &[],
         vines: &[],
+        posters: &[],
         goods: &[],
         labels: &[],
         signs: &[("THE HILLS", Dir::Right)],
@@ -521,6 +533,7 @@ const REGIONS: [Region; 15] = [
         racks: &[],
         folk: &[],
         vines: &[((21, 10), Dir::Up, "LIFT VINE")],
+        posters: &[],
         // Until there's a smithy (Henry, 2026-11-05: for testing, lay some on the ground).
         goods: &[((20, 13), "stone_hammer", "granite"), ((21, 13), "metal_chisel", "pig_iron_ingot"), ((22, 13), "stone_hammer", "granite"), ((23, 13), "metal_chisel", "pig_iron_ingot")],
         labels: &[],
@@ -541,6 +554,7 @@ const REGIONS: [Region; 15] = [
         racks: &[],
         folk: &[],
         vines: &[((16, 13), Dir::Down, "ORE VINE")],
+        posters: &[],
         goods: &[],
         labels: &[],
         signs: &[],
@@ -561,6 +575,7 @@ const REGIONS: [Region; 15] = [
         racks: &[],
         folk: &[],
         vines: &[],
+        posters: &[],
         goods: &[],
         labels: &[((21, 6), "GATHERING HALL")],
         signs: &[("COPPER CUT", Dir::Right), ("TEMPLE TOWN", Dir::Down)],
@@ -579,6 +594,7 @@ const REGIONS: [Region; 15] = [
         racks: &[],
         folk: &[],
         vines: &[],
+        posters: &[],
         // Until there's a smithy, a knife for bast fiber and a needle for sacks.
         goods: &[((16, 8), "knife", "pig_iron_ingot"), ((21, 8), "needle", "pig_iron_ingot")],
         labels: &[],
@@ -598,6 +614,7 @@ const REGIONS: [Region; 15] = [
         racks: &[],
         folk: &[],
         vines: &[((21, 6), Dir::Right, "CHARCOAL VINE")],
+        posters: &[],
         goods: &[],
         labels: &[],
         signs: &[("VERDIGRIS", Dir::Up)],
@@ -618,6 +635,7 @@ const REGIONS: [Region; 15] = [
         racks: &[((19, 8), "buckled_belt")],
         folk: &[],
         vines: &[],
+        posters: &[],
         goods: &[],
         labels: &[((20, 2), "ASSAY OFFICE"), ((20, 7), "MINERS' OUTFITTER")],
         signs: &[("VERDIGRIS", Dir::Left)],
@@ -636,6 +654,7 @@ const REGIONS: [Region; 15] = [
         racks: &[],
         folk: &[],
         vines: &[],
+        posters: &[],
         goods: &[],
         labels: &[],
         signs: &[("HEMP HOLLOW", Dir::Up)],
@@ -655,6 +674,7 @@ const REGIONS: [Region; 15] = [
         racks: &[],
         folk: &[],
         vines: &[],
+        posters: &[],
         goods: &[((7, 4), "pick", "pig_iron_ingot"), ((21, 6), "metal_pot", "pig_iron_ingot")],
         labels: &[],
         signs: &[("VERDIGRIS EAST", Dir::Up), ("BELLOWS", Dir::Left)],
@@ -674,6 +694,7 @@ const REGIONS: [Region; 15] = [
         racks: &[],
         folk: &[],
         vines: &[],
+        posters: &[],
         goods: &[],
         labels: &[],
         signs: &[("COPPER CUT", Dir::Left), ("THE TIN GULCH", Dir::Right), ("ALUM SPRINGS", Dir::Down)],
@@ -693,6 +714,7 @@ const REGIONS: [Region; 15] = [
         racks: &[],
         folk: &[],
         vines: &[],
+        posters: &[],
         goods: &[((7, 3), "basket", "juniper_sticks")],
         labels: &[],
         signs: &[("VERDIGRIS EAST", Dir::Left)],
@@ -1331,6 +1353,8 @@ pub struct World {
     pub workers: Vec<Worker>,
     pub supplies: Vec<Supply>,
     pub props: Vec<((i32, i32), Prop)>,
+    /// Tutorial posters, on walls: where, and which tutorial (`tutorial::TOPICS`).
+    pub posters: Vec<((i32, i32), usize)>,
     /// Racks of equipment.
     pub racks: Vec<Rack>,
     /// Gates into the provinces past the first.
@@ -1396,7 +1420,7 @@ impl World {
         let (mut mouths, mut parts) = (Vec::new(), Vec::new());
         let (mut gates, mut provinces, mut racks, mut looks) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         let mut towns = Vec::new();
-        let (mut vine_feet, mut items) = (Vec::new(), Vec::new());
+        let (mut vine_feet, mut items, mut posters) = (Vec::new(), Vec::new(), Vec::new());
         for (ox, oy, region, rows) in placed {
             let rw = rows[0].len() as i32;
             provinces.push(((ox, oy, rw, rows.len() as i32), region.province));
@@ -1526,6 +1550,12 @@ impl World {
                 racks.push(Rack { x, y, piece });
             }
             vine_feet.extend(region.vines.iter().map(|&(foot, dir, name)| (at(foot), dir, name)));
+            for &(spot, topic) in region.posters {
+                let (x, y) = at(spot);
+                assert!(tiles[(y * w + x) as usize] == Tile::Wall && topic < tutorial::TOPICS.len(), "a poster at {spot:?} isn't on a wall");
+                props.push(((x, y), Prop("poster")));
+                posters.push(((x, y), topic));
+            }
             items.extend(region.goods.iter().map(|&(spot, good, from)| {
                 let (x, y) = at(spot);
                 Item::new(x, y, crate::econ::plain(data, good, from))
@@ -1614,7 +1644,7 @@ impl World {
             })
             .collect();
         let ground = tiles.clone();
-        Self { w, h, tiles, items, plants, bins, shops, particles: Vec::new(), boards, footbridge, bridge, wagons, signs, labels, starts, stands, townsfolk, plaques, workers, supplies, props, racks, gates, lifts, choices, provinces, looks, towns, ground, bells: Vec::new(), last_item_id: 0, seed: 0x9E37_79B9 }
+        Self { w, h, tiles, items, plants, bins, shops, particles: Vec::new(), boards, footbridge, bridge, wagons, signs, labels, starts, stands, townsfolk, plaques, workers, supplies, props, posters, racks, gates, lifts, choices, provinces, looks, towns, ground, bells: Vec::new(), last_item_id: 0, seed: 0x9E37_79B9 }
     }
 
     /// Where a search for a way about these tiles looks: the box around them, `SEARCH_MARGIN`
@@ -1733,6 +1763,17 @@ impl World {
     }
 
     /// The prop covering tile `(x, y)`, and the tile it starts at.
+    /// The tutorial whose poster hangs on this wall, if one does.
+    pub fn poster_at(&self, x: i32, y: i32) -> Option<usize> {
+        self.posters.iter().find(|p| p.0 == (x, y)).map(|p| p.1)
+    }
+
+    /// Where the poster on wall `at` is read from: the tile out of doors beside it, and the way
+    /// to face to read it.
+    pub fn poster_front(&self, (x, y): (i32, i32)) -> Option<((i32, i32), Dir)> {
+        DIRS.iter().map(|&d| ((x - d.delta().0, y - d.delta().1), d)).find(|&((sx, sy), _)| self.walkable(sx, sy) && !matches!(self.tile(sx, sy), Tile::Floor | Tile::Door | Tile::Pad | Tile::Peg | Tile::OutMat | Tile::Spot))
+    }
+
     pub fn prop_at(&self, x: i32, y: i32) -> Option<((i32, i32), Prop)> {
         self.props.iter().copied().find(|&((px, py), p)| {
             let (w, h) = p.kind().size;

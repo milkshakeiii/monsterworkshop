@@ -43,7 +43,7 @@ fn a_newcomer_starts_at_the_gate_beside_whoever_is_there() {
         assert!((m.x - sx).abs() + (m.y - sy).abs() <= 4, "{} starts at {:?}, far from {:?}", m.name, (m.x, m.y), (sx, sy));
     }
     assert_eq!(g.monsters[g.communes[1].controlled].commune, 1);
-    assert_eq!(g.communes[1].tutorial.stage, 0);
+    assert!(g.communes[1].tutorial.on.is_none(), "no tutorial until they take one up");
 }
 
 #[test]
@@ -149,14 +149,17 @@ fn a_newcomer_skips_steps_already_done_in_the_world_but_not_their_own() {
     let cloth = fabric(&g);
     g.world.bins[store].stock.push(cloth);
     g.monsters[0].routine = Some(Routine { flag: (0, 0), goals: Vec::new() });
-    g.communes[1].tutorial.stage = 6;
+    g.communes[1].tutorial.on = Some((crate::tutorial::CLOTH, 5));
     g.run_ticks(1);
-    assert_eq!(g.communes[1].tutorial.stage, 7, "fabric is already stored, but recording a loop is theirs to do");
+    assert!(g.communes[1].tutorial.done.contains(&crate::tutorial::CLOTH), "fabric is already stored");
+    g.communes[1].tutorial.on = Some((crate::tutorial::LOOPS, 0));
+    g.run_ticks(1);
+    assert_eq!(g.communes[1].tutorial.on, Some((crate::tutorial::LOOPS, 0)), "but recording a loop is theirs to do");
     // Somebody else built the footbridge.
     g.world.build_footbridge();
-    g.communes[1].tutorial.stage = 11;
+    g.communes[1].tutorial.on = Some((crate::tutorial::FOOTBRIDGE, 1));
     g.run_ticks(1);
-    assert_eq!(g.communes[1].tutorial.stage, 12, "the footbridge is up, but they still have to walk to Tanglemere");
+    assert_eq!(g.communes[1].tutorial.on, Some((crate::tutorial::FOOTBRIDGE, 2)), "the footbridge is up, but they still have to walk to Tanglemere");
     // What one commune makes doesn't count for another.
     g.event(0, Ev::Made("rope".into()));
     g.run_ticks(1);

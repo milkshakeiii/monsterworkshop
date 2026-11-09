@@ -74,6 +74,7 @@ pub fn variants(id: &str) -> Vec<Sprite> {
         "cloth_shelf" => vec![cloth_shelf()],
         "cutting_table" => vec![cutting_table()],
         "hanging_cloth" => [THREAD + 1, WATER + 1, LEAF + 1].into_iter().map(hanging_cloth).collect(),
+        "poster" => vec![poster()],
         "dummy" => vec![dummy()],
         "mirror" => vec![mirror()],
         "shop_sign" => vec![shop_sign()],
@@ -859,6 +860,28 @@ fn hanging_cloth(c: u8) -> Sprite {
     rect(&mut s, 1, 2, 1, 14, shift(c, 1));
     for x in (1..11).step_by(2) {
         s.set(x, 15, c);
+    }
+    s.outline()
+}
+
+/// A tutorial's poster pinned to a wall: a red heading, a goblin pushing a crate, and lines of
+/// print, on paper paler than anything round it so it's found at a glance.
+fn poster() -> Sprite {
+    let mut s = Sprite::blank(12, 15);
+    rect(&mut s, 0, 1, 11, 14, BUBBLE);
+    rect(&mut s, 11, 1, 11, 14, COTTON + 1);
+    rect(&mut s, 1, 2, 10, 3, THREAD + 1);
+    // The picture: a goblin, its eye, and the crate it pushes.
+    rect(&mut s, 2, 6, 4, 9, GOBLIN + 1);
+    s.set(3, 6, EYE);
+    rect(&mut s, 6, 6, 9, 9, WOOD + 2);
+    rect(&mut s, 6, 6, 9, 6, WOOD + 3);
+    for y in [11, 13] {
+        rect(&mut s, 2, y, 9, y, INK);
+    }
+    // Pinned at its top corners.
+    for x in [1, 10] {
+        s.set(x, 0, SPARK + 1);
     }
     s.outline()
 }

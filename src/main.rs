@@ -1,6 +1,7 @@
 #[cfg(windows)]
 mod audio;
 mod carry;
+mod cheat;
 #[cfg_attr(not(windows), allow(dead_code))] // the player's side: only Windows has a window so far
 mod client;
 #[allow(dead_code)] // the schema mirrors the JSON; some fields are read in later stages
@@ -721,9 +722,11 @@ fn export_screenshots(dir: &Path) {
         fb.save_png(&dir.join(name), &pal, &pal, 0);
     };
     let mut fg = Game::new();
+    // Where the builders' bench's work spot is: wherever the live village has it.
+    let builders = fg.world.shops.iter().find(|s| s.kind.label() == "BUILDERS' BENCH").expect("the builders' bench").spot;
     fg.monsters[0].bubble = None;
     fg.communes[0].controlled = 1;
-    (fg.monsters[1].x, fg.monsters[1].y, fg.monsters[1].facing) = (36, 28, game::Dir::Up);
+    (fg.monsters[1].x, fg.monsters[1].y, fg.monsters[1].facing) = (builders.0, builders.1, game::Dir::Up);
     fg.run_ticks(2);
     fg.communes[0].inspecting = true;
     shot(&fg, "36_builders_bench.png");
@@ -778,7 +781,7 @@ fn export_screenshots(dir: &Path) {
     }
     shot(&g, "43_old_sawgrass.png");
     // The builders' bench's card: a few of what else it makes, on its third page.
-    (g.monsters[c].x, g.monsters[c].y) = (36, 28);
+    (g.monsters[c].x, g.monsters[c].y) = builders;
     g.communes[0].inspecting = true;
     g.communes[0].card_page = 2;
     shot(&g, "44_what_it_makes.png");
@@ -788,7 +791,7 @@ fn export_screenshots(dir: &Path) {
     // A pumpkin on the builders' bench: it aims at a wagon kit, and its empty pads' ghosts show
     // what's still missing.
     g.communes[0].leaving = false;
-    let bench = g.world.shops.iter().position(|s| s.spot == (36, 28)).expect("the builders' bench");
+    let bench = g.world.shops.iter().position(|s| s.spot == builders).expect("the builders' bench");
     let pad = g.world.shops[bench].pads[3];
     let mut d = g.world.items[0].data.clone();
     (d.good, d.carried_tags) = ("pumpkin".into(), Vec::new());
@@ -963,5 +966,37 @@ fn export_screenshots(dir: &Path) {
         render::draw(&vg, 0, &sprites, &mut fb);
         fb.save_png(&dir.join(name), &hills, &hills, 0);
     }
+    // The cheat line half typed, as the window draws it over the picture, and what Enter set
+    // down (2026-11-08).
+    let mut cg = Game::new();
+    let (cx, cy) = (cg.monsters[0].x, cg.monsters[0].y);
+    let pal = palette::build(cg.world.style_at(cx, cy));
+    render::draw(&cg, 0, &sprites, &mut fb);
+    render::draw_cheat(&mut fb, "3 OAK PLA", &cheat::hints(&cg.data, "3 OAK PLA"));
+    fb.save_png(&dir.join("74_cheat_line.png"), &pal, &pal, 0);
+    cg.cheat(0, "3 OAK PLANKS", true);
+    for _ in 0..6 {
+        cg.update(&[]);
+    }
+    render::draw(&cg, 0, &sprites, &mut fb);
+    fb.save_png(&dir.join("75_cheat_set_down.png"), &pal, &pal, 0);
+    // Tutorials on posters (2026-11-08): a new player's welcome, the making-cloth poster on the
+    // gathering hall and its card, and its first step in the HUD once it's taken up.
+    let mut tg = Game::new();
+    let k = tg.player("screenshots");
+    render::draw(&tg, k, &sprites, &mut fb);
+    fb.save_png(&dir.join("76_welcome.png"), &pal, &pal, 0);
+    let c = tg.communes[k].controlled;
+    let &(at, _) = tg.world.posters.iter().find(|p| p.1 == tutorial::CLOTH).expect("the making-cloth poster");
+    let ((fx, fy), facing) = tg.world.poster_front(at).expect("read from the street");
+    (tg.monsters[c].x, tg.monsters[c].y, tg.monsters[c].facing) = (fx, fy, facing);
+    (tg.communes[k].welcome, tg.monsters[c].bubble, tg.communes[k].inspecting) = (false, None, true);
+    render::draw(&tg, k, &sprites, &mut fb);
+    fb.save_png(&dir.join("77_poster_card.png"), &pal, &pal, 0);
+    tg.communes[k].inspecting = false;
+    tg.script_as(k, "u");
+    tg.run_ticks(4);
+    render::draw(&tg, k, &sprites, &mut fb);
+    fb.save_png(&dir.join("78_tutorial_taken_up.png"), &pal, &pal, 0);
     println!("exported screenshots to {} ({} fabric stored)", dir.display(), g.cloth_stored());
 }

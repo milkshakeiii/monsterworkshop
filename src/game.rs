@@ -574,6 +574,9 @@ pub struct Commune {
     pub leaving: bool,
     #[serde(skip)]
     pub left: bool,
+    /// A new player's welcome (`tutorial::WELCOME`), up until they press a key.
+    #[serde(skip)]
+    pub welcome: bool,
 }
 
 /// Who hears a sound: everyone looking at the screen it's on, or only one commune's player
@@ -851,7 +854,7 @@ impl Game {
             return k;
         }
         let k = self.communes.iter().position(|c| c.key.is_empty() && !c.town).unwrap_or_else(|| self.join());
-        self.communes[k].key = key.to_string();
+        (self.communes[k].key, self.communes[k].welcome) = (key.to_string(), true);
         k
     }
 
@@ -970,6 +973,13 @@ impl Game {
     }
 
     /// The applicant stand monster `c` faces, if someone waits there.
+    /// The tutorial whose poster monster `c` faces, if it faces one.
+    pub fn faced_poster(&self, c: usize) -> Option<usize> {
+        let m = &self.monsters[c];
+        let (dx, dy) = m.facing.delta();
+        self.world.poster_at(m.x + dx, m.y + dy)
+    }
+
     pub fn faced_applicant(&self, c: usize) -> Option<usize> {
         let m = &self.monsters[c];
         let (dx, dy) = m.facing.delta();
@@ -1300,6 +1310,11 @@ impl Game {
     /// Commune `k`'s player: the screen they look at, and the monster they control.
     fn player_input(&mut self, k: usize, inp: &Input, sfx: &mut Vec<Sfx>) {
         let me = &mut self.communes[k];
+        // The welcome: any key closes it, and does nothing else.
+        if me.welcome {
+            me.welcome = !inp.any_pressed();
+            return;
+        }
         // Esc backs out of what's open, the top first; with nothing open it asks before leaving
         // the world. While it asks, any other key takes the question back and does nothing else.
         if inp.back_pressed {
@@ -1459,6 +1474,10 @@ impl Game {
             }
             if let Some(r) = self.faced_rack(c) {
                 self.give_piece(c, r, sfx);
+                return;
+            }
+            if let Some(t) = self.faced_poster(c) {
+                self.take_up(k, t, sfx);
                 return;
             }
         }
@@ -2155,62 +2174,101 @@ impl Game {
         }
     }
 
-    /// Each commune's tutorial moves on. What a player does with their own monsters (making
-    /// things, loops, helpers, leading a wagon) counts only for their commune; a result in the
-    /// world (goods stored, a bridge built, a workshop set up) counts for everyone, so a newcomer
-    /// skips steps someone else has already done.
+    /// Each commune's tutorial moves on, if one is taken up. What a player does with their own
+    /// monsters (making things, loops, helpers, leading a wagon) counts only for their commune; a
+    /// result in the world (goods stored, a bridge built, a workshop set up) counts for everyone,
+    /// so a newcomer skips steps someone else has already done.
     fn advance_tutorial(&mut self) {
         let events = std::mem::take(&mut self.events);
-        let stored = |good: &str| self.world.bins.iter().any(|b| b.stock.iter().any(|d| d.good == good));
         for k in 0..self.communes.len() {
             if self.communes[k].town {
                 continue;
             }
             let mine: Vec<&Ev> = events.iter().filter(|(c, _)| *c == k).map(|(_, e)| e).collect();
-            let own = || self.monsters.iter().filter(move |m| m.commune == k);
-            let c = &mut self.communes[k];
             for e in &mine {
                 if let Ev::Made(g) = e {
-                    c.made.insert(g.clone());
+                    self.communes[k].made.insert(g.clone());
                 }
             }
-            c.tutorial.steps += mine.iter().filter(|e| ***e == Ev::Walked).count() as u32;
-            let playing = own().filter(|m| m.playing).count();
-            let has_routine = own().any(|m| m.routine.is_some());
-            let led_wagon = self.world.wagons.iter().any(|w| w.last_leader.is_some_and(|id| own().any(|m| m.id == id)));
-            loop {
-                let made = |g: &str| c.made.contains(g);
-                let met = match c.tutorial.stage {
-                    0 => c.tutorial.steps >= 4,
-                    1 => made("cotton_bolls"),
-                    2 => stored("cotton_bolls") || made("cotton_slivers"),
-                    3 => made("cotton_slivers"),
-                    4 => made("thread"),
-                    5 => made("fabric"),
-                    6 => stored("fabric"),
-                    7 => has_routine,
-                    8 => playing >= 2,
-                    9 => own().count() > 2,
-                    10 => made("rope"),
-                    11 => self.world.footbridge_built(),
-                    12 => own().any(|m| area_name(m.x, m.y) == "TANGLEMERE"),
-                    13 => made("lye"),
-                    14 => made("quicklime"),
-                    15 => made("indigo"),
-                    16 => stored("dyed_fabric"),
-                    17 => led_wagon,
-                    18 => mine.contains(&&Ev::Unloaded),
-                    19 => self.world.bridge_built(),
-                    20 => made("kiln_kit") || made("workbench_kit"),
-                    21 => self.world.shops.iter().any(|s| s.frontier.as_ref().is_some_and(|f| !f.fallen)),
-                    _ => false,
-                };
-                if !met || c.tutorial.stage >= tutorial::DONE {
-                    break;
-                }
-                c.tutorial.stage += 1;
-            }
+            self.follow_tutorial(k, &mine);
         }
+    }
+
+    /// Whether step `step` of tutorial `t` is met for commune `k`, given what happened to it
+    /// this tick.
+    fn step_met(&self, k: usize, t: usize, step: usize, mine: &[&Ev]) -> bool {
+        let made = |g: &str| self.communes[k].made.contains(g);
+        let stored = |good: &str| self.world.bins.iter().any(|b| b.stock.iter().any(|d| d.good == good));
+        let own = || self.monsters.iter().filter(move |m| m.commune == k);
+        match (t, step) {
+            (tutorial::CLOTH, 0) => made("cotton_bolls"),
+            (tutorial::CLOTH, 1) => stored("cotton_bolls") || made("cotton_slivers"),
+            (tutorial::CLOTH, 2) => made("cotton_slivers"),
+            (tutorial::CLOTH, 3) => made("thread"),
+            (tutorial::CLOTH, 4) => made("fabric"),
+            (tutorial::CLOTH, 5) => stored("fabric"),
+            (tutorial::LOOPS, 0) => own().any(|m| m.routine.is_some()),
+            (tutorial::LOOPS, 1) => own().filter(|m| m.playing).count() >= 2,
+            (tutorial::HELPERS, 0) => own().count() > 2,
+            (tutorial::FOOTBRIDGE, 0) => made("rope"),
+            (tutorial::FOOTBRIDGE, 1) => self.world.footbridge_built(),
+            (tutorial::FOOTBRIDGE, 2) => own().any(|m| area_name(m.x, m.y) == "TANGLEMERE"),
+            (tutorial::DYEING, 0) => made("lye"),
+            (tutorial::DYEING, 1) => made("quicklime"),
+            (tutorial::DYEING, 2) => made("indigo"),
+            (tutorial::DYEING, 3) => stored("dyed_fabric"),
+            (tutorial::WAGONS, 0) => self.world.wagons.iter().any(|w| w.last_leader.is_some_and(|id| own().any(|m| m.id == id))),
+            (tutorial::WAGONS, 1) => mine.contains(&&Ev::Unloaded),
+            (tutorial::WAGONS, 2) => self.world.bridge_built(),
+            (tutorial::KITS, 0) => made("kiln_kit") || made("workbench_kit"),
+            (tutorial::KITS, 1) => self.world.shops.iter().any(|s| s.frontier.as_ref().is_some_and(|f| !f.fallen)),
+            _ => false,
+        }
+    }
+
+    /// How many of tutorial `t`'s steps are met, from its first, for commune `k`.
+    fn steps_met(&self, k: usize, t: usize, from: usize, mine: &[&Ev]) -> usize {
+        (from..tutorial::TOPICS[t].steps.len()).find(|&s| !self.step_met(k, t, s, mine)).unwrap_or(tutorial::TOPICS[t].steps.len())
+    }
+
+    /// Commune `k`'s tutorial, if one is taken up, moves past every step that's met; past its
+    /// last it's done, and their monster says so with a chime.
+    fn follow_tutorial(&mut self, k: usize, mine: &[&Ev]) {
+        let Some((t, step)) = self.communes[k].tutorial.on else { return };
+        let topic = &tutorial::TOPICS[t];
+        let step = self.steps_met(k, t, step, mine);
+        if step < topic.steps.len() {
+            self.communes[k].tutorial.on = Some((t, step));
+            return;
+        }
+        let me = &mut self.communes[k].tutorial;
+        me.on = None;
+        me.done.insert(t);
+        let said = format!("THAT'S {} DONE! {}", topic.title, topic.after);
+        let c = self.communes[k].controlled;
+        self.say(c, said.trim_end(), false);
+        self.sounds.push((Heard::By(k), Sfx::Chime));
+    }
+
+    /// Commune `k`'s player pressed Space at tutorial `t`'s poster: it's taken up at its first
+    /// step not met yet, or put aside if it was the one taken up. Only one at a time.
+    fn take_up(&mut self, k: usize, t: usize, sfx: &mut Vec<Sfx>) {
+        let c = self.communes[k].controlled;
+        let topic = &tutorial::TOPICS[t];
+        sfx.push(Sfx::Pop);
+        if self.communes[k].tutorial.on.is_some_and(|(on, _)| on == t) {
+            self.communes[k].tutorial.on = None;
+            self.say(c, &format!("PUT ASIDE FOR NOW: {}.", topic.title), false);
+            return;
+        }
+        let step = self.steps_met(k, t, 0, &[]);
+        if step == topic.steps.len() {
+            self.communes[k].tutorial.done.insert(t);
+            self.say(c, &format!("ALL OF {} IS DONE ALREADY.", topic.title), false);
+            return;
+        }
+        self.communes[k].tutorial.on = Some((t, step));
+        self.say(c, &format!("TUTORIAL: {}. ITS STEPS SHOW BELOW.", topic.title), false);
     }
 
     /// Fabric of any kind in the cloth store: the HUD's running tally for now.
@@ -2259,8 +2317,10 @@ impl Game {
         self.script_as(0, keys);
     }
 
-    /// The same, as commune `k`'s player; the other players press nothing.
+    /// The same, as commune `k`'s player; the other players press nothing. A scripted player
+    /// has read their welcome already.
     pub fn script_as(&mut self, k: usize, keys: &str) {
+        self.communes[k].welcome = false;
         for ch in keys.chars() {
             let mut inp = Input::default();
             match ch {

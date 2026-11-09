@@ -2,15 +2,20 @@
 //! pictures. Playing a world alone runs its server inside the game; `--connect` plays on
 //! someone else's. Keys are polled at 250 Hz and sent the moment one goes down or what's held
 //! changes, and each picture is shown the moment it arrives. `--lag MS` slows every connection
-//! the window makes by that much each round trip, to feel a slow one.
+//! the window makes by that much each round trip, to feel a slow one. A backquote opens a cheat
+//! line over the picture (see `cheat.rs`); while it's open, keys type into it and reach nothing
+//! else.
 
 use crate::audio::Audio;
+use crate::cheat;
 use crate::client::{self, Connection};
+use crate::data::Data;
 use crate::framebuffer::Framebuffer;
 use crate::game::{Game, Input};
 use crate::net::{self, ToPlayer};
 use crate::server::Server;
 use crate::{palette, render, save};
+use std::cell::RefCell;
 use std::ffi::OsStr;
 use std::mem::{size_of, zeroed};
 use std::os::windows::ffi::OsStrExt;
@@ -34,8 +39,9 @@ enum Screen {
     /// `asking`: Esc or Del was pressed once (quit? delete the picked world?); the same key
     /// again does it.
     Title { worlds: Vec<PathBuf>, sel: usize, error: Option<String>, asking: Option<Ask> },
-    /// `local`: the world's own server, when playing alone.
-    Play { conn: Connection, local: Option<Local> },
+    /// `local`: the world's own server, when playing alone. `typing`: the cheat line, while
+    /// it's open.
+    Play { conn: Connection, local: Option<Local>, typing: Option<String> },
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -74,12 +80,49 @@ impl Local {
 fn play_alone(game: Game, path: PathBuf, key: &str, lag: Duration) -> std::io::Result<Screen> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
     let addr = listener.local_addr()?;
-    let server = Server::new(game, path, listener)?;
+    let server = Server::new(game, path, listener)?.allowing_cheats();
     let stop = Arc::new(AtomicBool::new(false));
     let running = stop.clone();
     let thread = std::thread::spawn(move || server.run(&running));
     let conn = Connection::connect(addr, key, lag)?;
-    Ok(Screen::Play { conn, local: Some(Local { stop, thread }) })
+    Ok(Screen::Play { conn, local: Some(Local { stop, thread }), typing: None })
+}
+
+thread_local! {
+    /// Characters typed since the window last looked (`WM_CHAR`), for the cheat line.
+    static TYPED: RefCell<Vec<char>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Takes what was typed into the cheat line (opening it with a backquote) and returns the keys
+/// the world hears: none while it's open, or while it was this time round, so the keys that
+/// typed it, and the Enter or Esc that closed it, do nothing else. Enter sends the line; Tab
+/// fills in the first name it suggests.
+fn type_cheat(typing: &mut Option<String>, typed: &[char], polled: Input, conn: &mut Connection, data: &mut Option<Data>) -> std::io::Result<Input> {
+    let was = typing.is_some();
+    for &ch in typed {
+        match (typing.as_mut(), ch) {
+            (None, '`') => *typing = Some(String::new()),
+            (None, _) => {}
+            (Some(_), '`' | '\u{1b}') => *typing = None,
+            (Some(line), '\r') => {
+                if !line.trim().is_empty() {
+                    conn.cheat(line)?;
+                }
+                *typing = None;
+            }
+            (Some(line), '\u{8}') => {
+                line.pop();
+            }
+            (Some(line), '\t') => {
+                if let Some(first) = cheat::hints(data.get_or_insert_with(Data::load), line).into_iter().next() {
+                    *line = first;
+                }
+            }
+            (Some(line), c) if (c.is_ascii_alphanumeric() || " -'()".contains(c)) && line.len() < cheat::LONGEST => line.push(c.to_ascii_uppercase()),
+            (Some(_), _) => {}
+        }
+    }
+    Ok(if was || typing.is_some() { Input::default() } else { polled })
 }
 
 fn key_down(vk: i32) -> bool {
@@ -217,12 +260,14 @@ pub fn run(audio: &mut Audio, windowed: bool, connect: Option<String>, player: O
 
         let mut keys = Keys::default();
         let mut latched = Input::default();
+        // The goods, for the cheat line's suggestions: read the first time it's used.
+        let mut cheat_data: Option<Data> = None;
         let mut crt = true;
         let mut screen = match connect {
             Some(addr) => {
                 let addr = if addr.contains(':') { addr } else { format!("{addr}:{}", net::DEFAULT_PORT) };
                 match Connection::connect(addr.as_str(), &key, lag) {
-                    Ok(conn) => Screen::Play { conn, local: None },
+                    Ok(conn) => Screen::Play { conn, local: None, typing: None },
                     Err(e) => Screen::title(Some(format!("COULDN'T REACH {addr}: {e}").to_uppercase())),
                 }
             }
@@ -243,14 +288,23 @@ pub fn run(audio: &mut Audio, windowed: bool, connect: Option<String>, player: O
             }
 
             // Keys only count while the window has focus.
-            let (polled, f2) = if GetForegroundWindow() == hwnd { keys.poll() } else { (Input::default(), false) };
+            let (mut polled, f2) = if GetForegroundWindow() == hwnd { keys.poll() } else { (Input::default(), false) };
             let mut redraw = f2;
             crt ^= f2;
+            let typed: Vec<char> = TYPED.with(|t| t.borrow_mut().drain(..).collect());
 
             // Playing: keys go out as they change, and pictures are shown as they arrive. (Esc
             // too: the world knows what's open, and says goodbye when it's left.)
-            if let Screen::Play { conn, .. } = &mut screen {
-                let mut lost = conn.keys(&polled).err().map(|e| format!("LOST THE CONNECTION: {e}"));
+            if let Screen::Play { conn, typing, .. } = &mut screen {
+                let mut lost = None;
+                match type_cheat(typing, &typed, polled, conn, &mut cheat_data) {
+                    Ok(heard) => {
+                        redraw |= !typed.is_empty();
+                        polled = heard;
+                    }
+                    Err(e) => lost = Some(format!("LOST THE CONNECTION: {e}")),
+                }
+                lost = lost.or_else(|| conn.keys(&polled).err().map(|e| format!("LOST THE CONNECTION: {e}")));
                 for m in conn.messages() {
                     match m {
                         Ok(ToPlayer::Frame { sounds, style: shown_in, pixels }) => {
@@ -334,8 +388,17 @@ pub fn run(audio: &mut Audio, windowed: bool, connect: Option<String>, player: O
                 redraw = true;
             }
             if redraw {
-                // The title is in the first province's colors; play, in the screen's.
-                present(&fb, crt, if matches!(screen, Screen::Play { .. }) { style } else { 0 });
+                // The title is in the first province's colors; play, in the screen's. The cheat
+                // line is drawn over the server's picture, never into it.
+                match &screen {
+                    Screen::Play { typing: Some(line), .. } => {
+                        let mut shown = Framebuffer { px: fb.px.clone() };
+                        render::draw_cheat(&mut shown, line, &cheat::hints(cheat_data.get_or_insert_with(Data::load), line));
+                        present(&shown, crt, style);
+                    }
+                    Screen::Play { .. } => present(&fb, crt, style),
+                    Screen::Title { .. } => present(&fb, crt, 0),
+                }
             } else {
                 std::thread::sleep(Duration::from_millis(4));
             }
@@ -350,6 +413,12 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam
     match msg {
         WM_DESTROY | WM_CLOSE => {
             PostQuitMessage(0);
+            0
+        }
+        WM_CHAR => {
+            if let Some(c) = char::from_u32(wparam as u32) {
+                TYPED.with(|t| t.borrow_mut().push(c));
+            }
             0
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),

@@ -3,7 +3,8 @@
 //!
 //! Every message is a 4-byte little-endian length, then a tag byte, then its payload.
 //! - To the server: `Hello` (protocol version and the player's key), then `Keys` whenever a key
-//!   goes down or anything held changes.
+//!   goes down or anything held changes, and `Cheat` when a cheat
+//!   line is typed (for testing).
 //! - To a player: `Welcome` (which commune is theirs), then a `Frame` each tick something
 //!   changed: the sounds they hear, the palette their screen is shown in (its province's look)
 //!   and its changed pixels, compressed. `Bye` when the server lets them go.
@@ -16,13 +17,15 @@ use crate::game::{Input, Sfx};
 use std::io::{self, Read, Write};
 
 /// Bump when messages change; a player's game and a server must agree on it.
-pub const PROTOCOL: u32 = 5;
+pub const PROTOCOL: u32 = 6;
 pub const DEFAULT_PORT: u16 = 7777;
 const MAX_MESSAGE: usize = 4 << 20;
 
 pub enum ToServer {
     Hello { protocol: u32, key: String },
     Keys(Input),
+    /// A cheat line: a good's name to set down beside the player's monster (see `cheat.rs`).
+    Cheat(String),
 }
 
 pub enum ToPlayer {
@@ -67,6 +70,7 @@ impl ToServer {
                 write_message(w, 1, &p)
             }
             ToServer::Keys(inp) => write_message(w, 2, &key_bits(inp).to_le_bytes()),
+            ToServer::Cheat(text) => write_message(w, 3, text.as_bytes()),
         }
     }
 
@@ -79,6 +83,7 @@ impl ToServer {
                 Ok(ToServer::Hello { protocol, key })
             }
             2 if p.len() == 4 => Ok(ToServer::Keys(keys_from_bits(u32::from_le_bytes(p[..4].try_into().unwrap())))),
+            3 => Ok(ToServer::Cheat(String::from_utf8_lossy(&p).into_owned())),
             _ => Err(bad("an unknown message to the server")),
         }
     }
@@ -206,6 +211,10 @@ mod tests {
         ToServer::Hello { protocol: PROTOCOL, key: "abc123".into() }.write(&mut wire).unwrap();
         let ToServer::Hello { protocol, key } = ToServer::read(&mut wire.as_slice()).unwrap() else { panic!("not a hello") };
         assert_eq!((protocol, key.as_str()), (PROTOCOL, "abc123"));
+        let mut wire = Vec::new();
+        ToServer::Cheat("3 OAK PLANKS".into()).write(&mut wire).unwrap();
+        let ToServer::Cheat(line) = ToServer::read(&mut wire.as_slice()).unwrap() else { panic!("not a cheat") };
+        assert_eq!(line, "3 OAK PLANKS");
 
         let had = vec![0u8; FB_W * FB_H];
         let mut now = had.clone();

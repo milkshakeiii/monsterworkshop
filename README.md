@@ -95,3 +95,5 @@ To try the Temple Bell without playing up to it, write a world that has everythi
 ```bash
 cargo run --release -- --temple-test-world
 ```
+
+To set goods down while testing, press the backquote key (`` ` ``) in a world played alone and type a good's name, with a count and a variety if you like (`3 OAK PLANKS`). Tab fills in the name it suggests, Enter sets them down beside your monster, and Esc closes the line.

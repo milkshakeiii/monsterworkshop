@@ -5,7 +5,7 @@ use crate::game::{Game, Species};
 use crate::inspect;
 use crate::palette::*;
 use crate::sprites::{Sprite, Sprites};
-use crate::tutorial::{self, wrap, HELP, STAGES};
+use crate::tutorial::{self, wrap, HELP, WELCOME};
 use crate::world::*;
 
 /// The sprites a workshop kind's `look` can name (`data/workshops.json`).
@@ -117,6 +117,9 @@ pub fn draw(g: &Game, k: usize, sp: &Sprites, fb: &mut Framebuffer) {
     }
     if me.leaving {
         draw_leaving(fb);
+    }
+    if me.welcome {
+        draw_welcome(fb);
     }
 }
 
@@ -1232,8 +1235,11 @@ fn blit_ghost(fb: &mut Framebuffer, s: &Sprite, x: i32, y: i32) {
     }
 }
 
-fn draw_building_labels(g: &Game, fb: &mut Framebuffer, v: &View) {
-    let mut named: Vec<((i32, i32), &str)> = Vec::new();
+/// Where each building's name is written: the name, its wall's row, and the stretch of that wall
+/// (first and last tile) it's centered on. A workshop's goes on its top wall, or its bottom wall
+/// when its work spot is right under the top one; the rest are placed by the map's data.
+pub(crate) fn building_labels(g: &Game) -> Vec<(&'static str, i32, (i32, i32))> {
+    let mut named: Vec<((i32, i32), &'static str)> = Vec::new();
     // Town workshops' buildings; frontier ones are open-air, with no walls to put a name on.
     // One out in the open (a charcoal mound, the smith's own forge) has no wall to put a name on.
     for s in g.world.shops.iter().filter(|s| s.kind.is_building() && s.frontier.is_none() && indoors(g, s.spot.0, s.spot.1)) {
@@ -1254,35 +1260,46 @@ fn draw_building_labels(g: &Game, fb: &mut Framebuffer, v: &View) {
         named.push(((sx, wy), s.kind.label()));
     }
     named.extend(g.world.labels.iter().copied());
-    for ((sx, wy), label) in named.into_iter().filter(|((x, y), _)| v.sees(*x, *y)) {
-        let (mut l, mut r) = (sx, sx);
-        while matches!(g.world.tile(l - 1, wy), Tile::Wall | Tile::Door) {
-            l -= 1;
-        }
-        while g.world.tile(r + 1, wy) == Tile::Wall || g.world.tile(r + 1, wy) == Tile::Door {
-            r += 1;
-        }
-        // Centered on the wall, unless that would cover a door or something hung on the wall
-        // (an awning, a woven hanging): then on the widest stretch of wall clear of them, if
-        // the name fits there.
-        let busy = |x: i32| g.world.tile(x, wy) == Tile::Door || g.world.prop_at(x, wy).is_some();
-        let half = Framebuffer::text_width(label, 1) / 2;
-        let covers = |(a, b): (i32, i32)| {
-            let mid = (a * TS + (b + 1) * TS) / 2;
-            ((mid - half).div_euclid(TS)..=(mid + half - 1).div_euclid(TS)).any(busy)
-        };
-        let mut span = (l, r);
-        if covers(span) {
-            let mut runs: Vec<(i32, i32)> = Vec::new();
-            for x in (l..=r).filter(|&x| !busy(x)) {
-                match runs.last_mut() {
-                    Some(run) if run.1 == x - 1 => run.1 = x,
-                    _ => runs.push((x, x)),
-                }
+    named
+        .into_iter()
+        .map(|((sx, wy), label)| {
+            let (mut l, mut r) = (sx, sx);
+            while matches!(g.world.tile(l - 1, wy), Tile::Wall | Tile::Door) {
+                l -= 1;
             }
-            let fits = |&(a, b): &(i32, i32)| (b - a + 1) * TS >= 2 * half + 4;
-            span = runs.into_iter().filter(fits).max_by_key(|&(a, b)| (b - a, -(a - l))).unwrap_or(span);
-        }
+            while g.world.tile(r + 1, wy) == Tile::Wall || g.world.tile(r + 1, wy) == Tile::Door {
+                r += 1;
+            }
+            // Centered on the wall, unless that would cover a door or something hung on the wall
+            // (an awning, a woven hanging): then on the widest stretch of wall clear of them, if
+            // the name fits there.
+            let busy = |x: i32| g.world.tile(x, wy) == Tile::Door || g.world.prop_at(x, wy).is_some();
+            let half = Framebuffer::text_width(label, 1) / 2;
+            let mut span = (l, r);
+            if label_covers(span, half).any(busy) {
+                let mut runs: Vec<(i32, i32)> = Vec::new();
+                for x in (l..=r).filter(|&x| !busy(x)) {
+                    match runs.last_mut() {
+                        Some(run) if run.1 == x - 1 => run.1 = x,
+                        _ => runs.push((x, x)),
+                    }
+                }
+                let fits = |&(a, b): &(i32, i32)| (b - a + 1) * TS >= 2 * half + 4;
+                span = runs.into_iter().filter(fits).max_by_key(|&(a, b)| (b - a, -(a - l))).unwrap_or(span);
+            }
+            (label, wy, span)
+        })
+        .collect()
+}
+
+/// The tiles a name `half` pixels either side of the middle of wall stretch `(a, b)` is written over.
+pub(crate) fn label_covers((a, b): (i32, i32), half: i32) -> std::ops::RangeInclusive<i32> {
+    let mid = (a * TS + (b + 1) * TS) / 2;
+    (mid - half).div_euclid(TS)..=(mid + half - 1).div_euclid(TS)
+}
+
+fn draw_building_labels(g: &Game, fb: &mut Framebuffer, v: &View) {
+    for (label, wy, span) in building_labels(g).into_iter().filter(|&(_, wy, span)| v.sees(span.0, wy) || v.sees(span.1, wy)) {
         let (x, y) = v.px(span.0, wy);
         let w = (span.1 - span.0 + 1) * TS;
         let (ink, shadow) = v.style.label();
@@ -2645,10 +2662,13 @@ fn draw_bubble(fb: &mut Framebuffer, sp: &Sprites, b: &BubbleBox) {
 fn draw_hud(g: &Game, sp: &Sprites, fb: &mut Framebuffer, v: &View) {
     fb.rect_bevel(0, VIEW_H, 400, 300 - VIEW_H, HUD_FILL, HUD_HI, HUD_SHADOW);
     let me = &g.communes[v.k];
-    let done = me.tutorial.stage >= tutorial::DONE;
-    let objective = STAGES[me.tutorial.stage.min(tutorial::DONE)];
+    // The tutorial taken up shows its step; with none, how to find one.
+    let (objective, color) = match me.tutorial.on {
+        Some((t, step)) => (tutorial::TOPICS[t].steps[step], TEXT),
+        None => (tutorial::IDLE, TEXT_DIM),
+    };
     for (k, line) in wrap(objective, 64).iter().enumerate() {
-        fb.text(line, 6, VIEW_H + 5 + k as i32 * 10, if done { TEXT_GOOD } else { TEXT }, Some(HUD_SHADOW), 1);
+        fb.text(line, 6, VIEW_H + 5 + k as i32 * 10, color, Some(HUD_SHADOW), 1);
     }
     fb.rect_fill(4, VIEW_H + 26, 392, 1, HUD_SHADOW);
     fb.rect_fill(4, VIEW_H + 27, 392, 1, HUD_MID);
@@ -2800,6 +2820,51 @@ fn draw_leaving(fb: &mut Framebuffer) {
     for (k, line) in lines.iter().enumerate() {
         fb.text_centered(line, x + w / 2, y + 20 + k as i32 * 11, TEXT, Some(HUD_SHADOW), 1);
     }
+}
+
+/// The cheat line (see `cheat.rs`), which the window draws over the server's picture, just above
+/// the HUD: what's typed, the names it could become (Tab fills in the first), and the keys.
+pub fn draw_cheat(fb: &mut Framebuffer, line: &str, hints: &[String]) {
+    let rows = hints.len().max(1) as i32;
+    let (x, w, h) = (8, 384, rows * 11 + 40);
+    let y = VIEW_H - h - 4;
+    fb.rect_bevel(x, y, w, h, HUD_FILL, HUD_HI, HUD_SHADOW);
+    let label = "CHEAT:";
+    fb.text(label, x + 8, y + 7, SPARK + 2, Some(HUD_SHADOW), 1);
+    let tx = x + 8 + Framebuffer::text_width(label, 1) + 6;
+    fb.text(line, tx, y + 7, TEXT, Some(HUD_SHADOW), 1);
+    fb.rect_fill(tx + Framebuffer::text_width(line, 1), y + 7, 5, 7, TEXT);
+    fb.rect_fill(x + 4, y + 19, w - 8, 1, HUD_SHADOW);
+    fb.rect_fill(x + 4, y + 20, w - 8, 1, HUD_MID);
+    let hy = y + 25;
+    if line.trim().is_empty() {
+        fb.text("TYPE A GOOD'S NAME, LIKE 3 OAK PLANKS.", x + 8, hy, TEXT_DIM, Some(HUD_SHADOW), 1);
+    } else if hints.is_empty() {
+        fb.text("NO GOOD'S NAME HAS THAT IN IT.", x + 8, hy, TEXT_WARN, Some(HUD_SHADOW), 1);
+    }
+    for (k, hint) in hints.iter().enumerate() {
+        let ly = hy + k as i32 * 11;
+        if k == 0 {
+            fb.rect_fill(x + 4, ly - 2, w - 8, 11, HUD_MID);
+            fb.text("TAB", x + w - 8 - Framebuffer::text_width("TAB", 1), ly, TEXT_DIM, Some(HUD_SHADOW), 1);
+        }
+        fb.text(hint, x + 8, ly, if k == 0 { TEXT } else { TEXT_DIM }, Some(HUD_SHADOW), 1);
+    }
+    fb.text_centered("ENTER SETS IT DOWN  TAB FILLS IN  ESC CLOSES", x + w / 2, y + h - 12, TEXT_DIM, Some(HUD_SHADOW), 1);
+}
+
+/// A new player's welcome: how to walk and examine, and that the posters teach the rest.
+fn draw_welcome(fb: &mut Framebuffer) {
+    let w = WELCOME.iter().map(|l| Framebuffer::text_width(l, 1)).max().unwrap_or(0) + 24;
+    let h = WELCOME.len() as i32 * 11 + 40;
+    let (x, y) = ((400 - w) / 2, (VIEW_H - h) / 2);
+    fb.rect_checker(0, 0, 400, VIEW_H, OUTLINE);
+    fb.rect_bevel(x, y, w, h, HUD_FILL, HUD_HI, HUD_SHADOW);
+    fb.text_centered("WELCOME TO PINEWATER", x + w / 2, y + 7, SPARK + 2, Some(HUD_SHADOW), 1);
+    for (k, line) in WELCOME.iter().enumerate() {
+        fb.text(line, x + 12, y + 22 + k as i32 * 11, TEXT, Some(HUD_SHADOW), 1);
+    }
+    fb.text_centered("ANY KEY TO START", x + w / 2, y + h - 12, TEXT_DIM, Some(HUD_SHADOW), 1);
 }
 
 fn draw_help(fb: &mut Framebuffer) {
