@@ -34,7 +34,7 @@ pub(crate) fn and_list(parts: &[String]) -> String {
 }
 
 /// "2 LOGS", "2 PLANKS", "3 ARROW BAMBOO": several of a name.
-fn several(n: usize, name: &str) -> String {
+pub(crate) fn several(n: usize, name: &str) -> String {
     let last = name.rsplit(' ').next().unwrap_or(name);
     if last.ends_with('S') || MASS.contains(&last) {
         format!("{n} {name}")

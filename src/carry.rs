@@ -221,14 +221,27 @@ impl Game {
                 self.monsters[i].waiting_on = Some(m);
                 return Going::Waiting(format!("THE {name} IS IN THE WAY."));
             }
+            // One waiting at a vine's foot (a full vine) is waited out, not shoved.
+            if self.world.vine_end(to.0, to.1).is_some() {
+                return Going::Waiting(self.in_the_way(to, o));
+            }
             return if self.start_shove(i, o, &[to]) { Going::Moving } else { Going::Stuck(format!("THE {name} IS IN THE WAY.")) };
         }
         self.push_good(i, k, to, true, sfx)
     }
 
-    /// Is this a stray: a good nobody is moving or using?
+    /// Is this a stray: a good nobody is moving or using? Not one at a vine's foot or head, which
+    /// is waiting to go up it or to be taken off it, as a good in a bin's chute is: shoved aside,
+    /// nobody's loop would find it again.
     pub(crate) fn is_stray(&self, it: &crate::world::Item) -> bool {
-        it.owner.is_none() && !it.locked && (it.id == 0 || !self.monsters.iter().any(|m| m.holds.contains(&Hold::Item(it.id))))
+        it.owner.is_none() && !it.locked && self.world.vine_end(it.x, it.y).is_none() && (it.id == 0 || !self.monsters.iter().any(|m| m.holds.contains(&Hold::Item(it.id))))
+    }
+
+    /// Why good `o`, lying at a vine's end where a loop's good goes, holds it up: the vine is full,
+    /// or the good is just in the way.
+    pub(crate) fn in_the_way(&self, to: (i32, i32), o: usize) -> String {
+        let full = self.world.vine_end(to.0, to.1).filter(|&(_, head)| !head).and_then(|(l, _)| self.vine_full(l));
+        full.unwrap_or_else(|| format!("THE {} IS IN THE WAY {}.", self.good_name(self.world.items[o].good()), self.place_name(to)))
     }
 
     /// Starts shoving stray item `o` aside, off the tiles in `avoid`. False if there's nowhere

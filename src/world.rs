@@ -79,9 +79,9 @@ struct Region {
     racks: &'static [((i32, i32), &'static str)],
     /// Townsfolk placed by the region's data rather than the map (region coordinates).
     folk: &'static [((i32, i32), Folk)],
-    /// Its vines (`ʃ` on the map): each one's foot, where goods are set to go, and the way it
-    /// carries them (region coordinates).
-    vines: &'static [((i32, i32), Dir)],
+    /// Its vines (`ʃ` on the map): each one's foot, where goods are set to go (region
+    /// coordinates), the way it carries them, and its name ("ORE VINE").
+    vines: &'static [((i32, i32), Dir, &'static str)],
     /// Goods lying about when a world begins: where, the good, and what it's plainly made from.
     goods: &'static [((i32, i32), &'static str, &'static str)],
 }
@@ -161,9 +161,14 @@ impl Prop {
 /// A vine (DESIGN.md, World highlights; PROVINCES.md, Vines straight): a living conveyor across
 /// a cliff, carrying goods straight to where they're used while the way on foot goes round. A
 /// good set on the tile at its foot is taken into its cradles and carried along, a tile at a
-/// time, and set down on the tile past its head once that's clear.
+/// time, and set down on the tile past its head once that's clear. It carries anything, in the
+/// order it was set there, so a good nobody takes from its head holds up the rest; and once its
+/// head is taken and every cradle full, what's set at its foot waits there (PROVINCES.md, Vines
+/// straight, decided 2026-11-07).
 #[derive(Clone, Debug)]
 pub struct Lift {
+    /// What it's called: "ORE VINE", said as "THE ORE VINE".
+    pub name: &'static str,
     /// Where goods are set to go.
     pub foot: (i32, i32),
     /// Its own tiles, from its foot on: what it's carrying rides on them.
@@ -515,7 +520,7 @@ const REGIONS: [Region; 15] = [
         at: (150, 32),
         racks: &[],
         folk: &[],
-        vines: &[((21, 10), Dir::Up)],
+        vines: &[((21, 10), Dir::Up, "LIFT VINE")],
         // Until there's a smithy (Henry, 2026-11-05: for testing, lay some on the ground).
         goods: &[((20, 13), "stone_hammer", "granite"), ((21, 13), "metal_chisel", "pig_iron_ingot"), ((22, 13), "stone_hammer", "granite"), ((23, 13), "metal_chisel", "pig_iron_ingot")],
         labels: &[],
@@ -535,7 +540,7 @@ const REGIONS: [Region; 15] = [
         at: (200, 32),
         racks: &[],
         folk: &[],
-        vines: &[((16, 13), Dir::Down)],
+        vines: &[((16, 13), Dir::Down, "ORE VINE")],
         goods: &[],
         labels: &[],
         signs: &[],
@@ -592,7 +597,7 @@ const REGIONS: [Region; 15] = [
         at: (175, 48),
         racks: &[],
         folk: &[],
-        vines: &[((21, 6), Dir::Right)],
+        vines: &[((21, 6), Dir::Right, "CHARCOAL VINE")],
         goods: &[],
         labels: &[],
         signs: &[("VERDIGRIS", Dir::Up)],
@@ -1520,7 +1525,7 @@ impl World {
                 tiles[(y * w + x) as usize] = Tile::Rack;
                 racks.push(Rack { x, y, piece });
             }
-            vine_feet.extend(region.vines.iter().map(|&(foot, dir)| (at(foot), dir)));
+            vine_feet.extend(region.vines.iter().map(|&(foot, dir, name)| (at(foot), dir, name)));
             items.extend(region.goods.iter().map(|&(spot, good, from)| {
                 let (x, y) = at(spot);
                 Item::new(x, y, crate::econ::plain(data, good, from))
@@ -1569,7 +1574,7 @@ impl World {
         let vine = |(x, y): (i32, i32)| props.iter().any(|&((px, py), p): &((i32, i32), Prop)| (px, py) == (x, y) && p.0 == "lift_vine");
         let lifts: Vec<Lift> = vine_feet
             .into_iter()
-            .map(|(foot, dir)| {
+            .map(|(foot, dir, name)| {
                 let (dx, dy) = dir.delta();
                 let mut tiles = Vec::new();
                 let mut at = (foot.0 + dx, foot.1 + dy);
@@ -1578,7 +1583,7 @@ impl World {
                     at = (at.0 + dx, at.1 + dy);
                 }
                 assert!(!tiles.is_empty(), "a vine's foot at {foot:?} with no vine {dir:?} of it");
-                Lift { foot, vine: tiles, top: at, dir }
+                Lift { name, foot, vine: tiles, top: at, dir }
             })
             .collect();
         // The footbridge spans the stretch of water from its west end to the far bank.
@@ -1764,6 +1769,17 @@ impl World {
 
     pub fn bin_at(&self, x: i32, y: i32) -> Option<usize> {
         self.bins.iter().position(|b| b.x == x && b.y == y)
+    }
+
+    /// The vine whose foot or head is at `(x, y)`, and whether it's the head: where goods are
+    /// set for it and where it sets them down.
+    pub fn vine_end(&self, x: i32, y: i32) -> Option<(usize, bool)> {
+        self.lifts.iter().position(|l| l.foot == (x, y) || l.top == (x, y)).map(|l| (l, self.lifts[l].top == (x, y)))
+    }
+
+    /// The vine running over tile `(x, y)`, on its own tiles between its foot and head.
+    pub fn vine_over(&self, x: i32, y: i32) -> Option<usize> {
+        self.lifts.iter().position(|l| l.vine.contains(&(x, y)))
     }
 
     pub fn plant_at(&self, x: i32, y: i32) -> Option<usize> {

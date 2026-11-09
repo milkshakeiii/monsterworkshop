@@ -2175,6 +2175,181 @@ fn the_cliff_lift_vine_carries_goods_up_and_waits_for_room_at_the_top() {
     assert!(lift.vine.iter().all(|&(x, y)| g.world.item_at(x, y).is_none()), "nothing left on the vine");
 }
 
+fn vine(g: &Game, name: &str) -> crate::world::Lift {
+    g.world.lifts.iter().find(|l| l.name == name).unwrap_or_else(|| panic!("the {name}")).clone()
+}
+
+fn lying(g: &Game, good: &str, (x, y): (i32, i32)) -> Item {
+    let from = if good == "charcoal" { "hemlock_log" } else { good };
+    Item::new(x, y, crate::econ::plain(&g.data, good, from))
+}
+
+/// Mogg's loop at the ore vine's foot in the Copper Cut: copper ore lying two pushes short of
+/// it, set at its foot. The ore is kept coming, `most` of it, while the way to the foot is clear.
+/// Runs `ticks`, taking away whatever reaches `drop`, and says how many did.
+fn feed_the_ore_vine(g: &mut Game, lift: &crate::world::Lift, ticks: u32, most: usize, drop: Option<(i32, i32)>) -> usize {
+    let (pile, mid) = ((lift.foot.0 - 2, lift.foot.1), (lift.foot.0 - 1, lift.foot.1));
+    if g.monsters[0].routine.is_none() {
+        let flag = (lift.foot.0 - 3, lift.foot.1);
+        start_loop(g, 0, Routine { flag, goals: vec![Goal::Move { good: "copper_ore".into(), from: pile, to: lift.foot }] }, flag);
+    }
+    let (mut sent, mut got) = (0, 0);
+    for _ in 0..ticks {
+        if sent < most && g.world.item_at(pile.0, pile.1).is_none() && g.world.item_at(mid.0, mid.1).is_none() && g.monster_at(pile.0, pile.1).is_none() {
+            let ore = lying(g, "copper_ore", pile);
+            g.world.items.push(ore);
+            sent += 1;
+        }
+        if let Some(k) = drop.and_then(|d| g.world.item_at(d.0, d.1)).filter(|&k| g.world.items[k].slide.is_none()) {
+            g.world.items.remove(k);
+            got += 1;
+        }
+        g.run_ticks(1);
+    }
+    got
+}
+
+/// Loops send goods by vine with nothing new to learn (2026-11-07): Mogg's loop sets copper ore
+/// at the ore vine's foot in the Copper Cut, and Bruna's takes it off its head in Bellows to a
+/// smelter's pad. The ore goes the long way round on foot; by vine it's a hop.
+#[test]
+fn a_loop_at_each_end_sends_ore_down_the_ore_vine_to_a_smelter() {
+    let mut g = Game::new();
+    let lift = vine(&g, "ORE VINE");
+    assert_eq!((crate::world::area_name(lift.foot.0, lift.foot.1), crate::world::area_name(lift.top.0, lift.top.1)), ("COPPER CUT", "BELLOWS"));
+    let dist = |a: (i32, i32), b: (i32, i32)| (a.0 - b.0).abs() + (a.1 - b.1).abs();
+    let pad = g.world.shops.iter().filter(|s| s.kind.id() == "smelter").flat_map(|s| s.pads.iter().copied()).min_by_key(|&p| dist(p, lift.top)).expect("a smelter");
+    let stand = (lift.top.0 - 1, lift.top.1 + 1);
+    start_loop(&mut g, 1, Routine { flag: stand, goals: vec![Goal::Move { good: "copper_ore".into(), from: lift.top, to: pad }] }, stand);
+    assert_eq!(feed_the_ore_vine(&mut g, &lift, 2400, 6, Some(pad)), 6, "every ore reached the smelter: {:?}", g.monsters[1].wait_reason);
+    assert_eq!(g.monsters[1].wait_reason, "WAITING FOR COPPER ORE AT THE ORE VINE'S HEAD.", "a wait names the vine's end");
+}
+
+/// A full vine backs up and waits (Henry, 2026-11-07), and says so where its goods are set: once
+/// every cradle holds ore and nobody has taken the ore at its head, what's set at its foot waits
+/// there, and the loop setting it there says why, as does the ore waiting.
+#[test]
+fn a_full_vine_backs_up_and_says_why_at_its_foot() {
+    let mut g = Game::new();
+    let lift = vine(&g, "ORE VINE");
+    feed_the_ore_vine(&mut g, &lift, 1500, 20, None);
+    let full = "THE ORE VINE IS FULL: NOBODY HAS TAKEN THE COPPER ORE FROM ITS HEAD.";
+    assert!(lift.vine.iter().chain([&lift.top, &lift.foot]).all(|&(x, y)| g.world.item_at(x, y).is_some()), "its head, every cradle and its foot");
+    assert_eq!(g.monsters[0].wait_reason, full, "Mogg's loop says why it waits");
+    // Mogg, his loop stopped, looking at the ore waiting at its foot.
+    g.monsters[0].routine = None;
+    (g.monsters[0].x, g.monsters[0].y, g.monsters[0].facing) = (lift.foot.0 - 1, lift.foot.1, Dir::Right);
+    let card = crate::inspect::card(&g, 0);
+    assert_eq!(card.title, "COPPER ORE");
+    assert!(on_first_page(&card, full), "the ore at its foot says why it waits");
+}
+
+/// A vine carries anything, in turn (Henry, 2026-11-07), so a good nobody takes from its head
+/// holds up the rest: a loop taking copper ore from the ore vine's head says it's charcoal lying
+/// there, and leaves it where it is.
+#[test]
+fn a_loop_at_a_vine_head_says_what_else_lies_there_and_leaves_it() {
+    let mut g = Game::new();
+    let lift = vine(&g, "ORE VINE");
+    let stand = (lift.top.0 - 1, lift.top.1 + 1);
+    let drop = (lift.top.0 - 3, lift.top.1);
+    start_loop(&mut g, 1, Routine { flag: stand, goals: vec![Goal::Move { good: "copper_ore".into(), from: lift.top, to: drop }] }, stand);
+    g.run_ticks(30);
+    assert_eq!(g.monsters[1].wait_reason, "WAITING FOR COPPER ORE AT THE ORE VINE'S HEAD.");
+    let coal = lying(&g, "charcoal", lift.top);
+    g.world.items.push(coal);
+    g.run_ticks(60);
+    assert_eq!(g.monsters[1].wait_reason, "THERE'S CHARCOAL AT THE ORE VINE'S HEAD, NOT COPPER ORE.");
+    assert!(g.world.item_at(lift.top.0, lift.top.1).is_some_and(|k| g.world.items[k].good() == "charcoal"), "left where the vine set it down");
+}
+
+/// A vine's foot and head are where goods come and go, as a bin's chute is (2026-11-07): a loop
+/// with nothing to do doesn't stand on its head (which would stop it), and a good waiting at its
+/// foot or head is no stray to shove aside, where nobody's loop would find it again.
+#[test]
+fn loops_keep_off_a_vines_ends_and_never_shove_goods_off_them() {
+    let mut g = Game::new();
+    let lift = vine(&g, "ORE VINE");
+    let drop = (lift.top.0 - 3, lift.top.1);
+    start_loop(&mut g, 1, Routine { flag: drop, goals: vec![Goal::Move { good: "copper_ore".into(), from: lift.top, to: drop }] }, lift.top);
+    g.run_ticks(20);
+    assert_ne!((g.monsters[1].x, g.monsters[1].y), lift.top, "off the vine's head");
+    assert!(!g.is_stray(&lying(&g, "charcoal", lift.top)) && !g.is_stray(&lying(&g, "charcoal", lift.foot)), "nothing at a vine's ends is a stray");
+    assert!(g.is_stray(&lying(&g, "charcoal", drop)), "but it is anywhere else");
+    // The vine full of ore and charcoal waiting at its foot: Mogg's loop setting ore there waits,
+    // saying why, and leaves the charcoal be.
+    let mut g = Game::new();
+    for &t in lift.vine.iter().chain([&lift.top]) {
+        let ore = lying(&g, "copper_ore", t);
+        g.world.items.push(ore);
+    }
+    let coal = lying(&g, "charcoal", lift.foot);
+    g.world.items.push(coal);
+    feed_the_ore_vine(&mut g, &lift, 300, 1, None);
+    assert!(g.world.item_at(lift.foot.0, lift.foot.1).is_some_and(|k| g.world.items[k].good() == "charcoal"), "the charcoal still waits at its foot");
+    assert_eq!(g.monsters[0].wait_reason, "THE ORE VINE IS FULL: NOBODY HAS TAKEN THE COPPER ORE FROM ITS HEAD.");
+}
+
+/// A vine's card (2026-11-07): where it carries goods, that it carries anything in turn, what's on
+/// it, and what holds it up; the same facing its foot, its head or the vine itself.
+#[test]
+fn a_vines_card_says_where_it_goes_whats_on_it_and_what_holds_it_up() {
+    let mut g = Game::new();
+    let lift = vine(&g, "ORE VINE");
+    let look = |g: &mut Game, at: (i32, i32), facing: Dir| {
+        (g.monsters[0].x, g.monsters[0].y, g.monsters[0].facing) = (at.0, at.1, facing);
+        crate::inspect::card(g, 0)
+    };
+    let card = look(&mut g, (lift.foot.0 - 1, lift.foot.1), Dir::Right);
+    assert_eq!(card.title, "THE ORE VINE", "facing its foot");
+    assert!(on_first_page(&card, "IT CARRIES WHATEVER IS SET AT ITS FOOT DOWN THE CLIFF TO BELLOWS."));
+    assert!(on_first_page(&card, "ANYTHING, IN TURN: A GOOD NOBODY TAKES FROM ITS HEAD HOLDS UP THE REST."));
+    assert!(on_first_page(&card, "NOTHING ON IT NOW."));
+    assert_eq!(look(&mut g, lift.foot, Dir::Down).title, "THE ORE VINE", "facing the vine");
+    assert_eq!(look(&mut g, (lift.top.0 + 1, lift.top.1), Dir::Left).title, "THE ORE VINE", "facing its head");
+    // Two ore and some charcoal on it, the last waiting for its head.
+    for (n, good) in [(0, "copper_ore"), (1, "charcoal"), (lift.vine.len() - 1, "copper_ore")] {
+        let it = lying(&g, good, lift.vine[n]);
+        g.world.items.push(it);
+    }
+    assert!(on_first_page(&look(&mut g, (lift.foot.0 - 1, lift.foot.1), Dir::Right), "CARRYING 2 COPPER ORE AND CHARCOAL."));
+    let it = lying(&g, "copper_ore", lift.top);
+    g.world.items.push(it);
+    let card = look(&mut g, (lift.foot.0 - 1, lift.foot.1), Dir::Right);
+    assert!(on_first_page(&card, "HELD UP: NOBODY HAS TAKEN THE COPPER ORE FROM ITS HEAD."), "held up, not yet full");
+    let card = look(&mut g, (lift.top.0 + 1, lift.top.1), Dir::Left);
+    assert_eq!(card.title, "COPPER ORE");
+    assert!(on_first_page(&card, "SET DOWN BY THE ORE VINE. WHAT'S BEHIND IT WAITS UNTIL IT'S TAKEN."), "the good at its head");
+    for &t in &lift.vine[2..lift.vine.len() - 1] {
+        let it = lying(&g, "copper_ore", t);
+        g.world.items.push(it);
+    }
+    let card = look(&mut g, (lift.foot.0 - 1, lift.foot.1), Dir::Right);
+    assert!(on_first_page(&card, "THE ORE VINE IS FULL: NOBODY HAS TAKEN THE COPPER ORE FROM ITS HEAD."), "full");
+    // Ore set at the foot of a vine with room rides it next; ore on it, riding.
+    g.world.items.retain(|it| (it.x, it.y) != lift.top);
+    let it = lying(&g, "copper_ore", lift.foot);
+    g.world.items.push(it);
+    assert!(on_first_page(&look(&mut g, (lift.foot.0 - 1, lift.foot.1), Dir::Right), "THE ORE VINE TAKES IT NEXT, DOWN THE CLIFF TO BELLOWS."));
+    assert!(on_first_page(&look(&mut g, lift.foot, Dir::Down), "RIDING THE ORE VINE DOWN THE CLIFF TO BELLOWS."));
+}
+
+/// Every vine's head can be pushed off sideways (2026-11-07): nobody can stand on a vine to push
+/// what it set down on past its head, so there's open ground on both sides of it. The ore vine's
+/// landing in Bellows had a lantern post on its west, so ore set down there could only be pulled,
+/// the slow way; the post stands by the assay office now.
+#[test]
+fn every_vines_head_has_open_ground_on_both_sides() {
+    let g = Game::new();
+    assert_eq!(g.world.lifts.iter().map(|l| l.name).collect::<Vec<_>>(), ["LIFT VINE", "ORE VINE", "CHARCOAL VINE"]);
+    for l in &g.world.lifts {
+        let (dx, dy) = l.dir.delta();
+        for side in [(l.top.0 + dy, l.top.1 + dx), (l.top.0 - dy, l.top.1 - dx)] {
+            assert!(g.world.walkable(side.0, side.1) && g.world.prop_at(side.0, side.1).is_none(), "the {}'s head at {:?} is shut in at {side:?}", l.name, l.top);
+        }
+    }
+}
+
 /// The hills walk as one (2026-11-05): from the way in, the long way round by Hemp Hollow and
 /// Charcoal Wood, up the Stone Stair into Verdigris, to the lift vine's head and on to the Copper
 /// Cut and Verdigris East, or on through Bellows to Alum Springs and up its ramp; and no other way,

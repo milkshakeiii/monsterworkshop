@@ -125,6 +125,9 @@ impl Game {
             let chute = if w.bins[b].mouth == Some(t) { "'S CHUTE" } else { "" };
             return format!("AT {}{chute}", self.bin_name(b));
         }
+        if let Some((l, head)) = w.vine_end(t.0, t.1) {
+            return format!("AT THE {}'S {}", w.lifts[l].name, if head { "HEAD" } else { "FOOT" });
+        }
         if let Some(p) = w.plant_at(t.0, t.1) {
             return format!("AT THE {}", crate::inspect::plant_name(&self.data, &w.plants[p].good));
         }
@@ -203,6 +206,12 @@ impl Game {
         match g {
             Goal::Move { good, from, to } => {
                 let Some(k) = self.world.item_at(from.0, from.1).filter(|&k| self.world.items[k].good() == good) else {
+                    // Something else lying there (charcoal at a vine's head that carries ore too):
+                    // say what, since it may be what holds everything up.
+                    if let Some(o) = self.world.item_at(from.0, from.1) {
+                        let other = crate::recipes::one(&name(self.world.items[o].good()));
+                        return Err(Why::world(format!("THERE'S {other} {}, NOT {}.", self.place_name(*from), name(good))));
+                    }
                     return Err(Why::world(format!("WAITING FOR {} {}.", name(good), self.place_name(*from))));
                 };
                 let it = &self.world.items[k];
@@ -226,6 +235,11 @@ impl Game {
                         let other = &self.world.items[o];
                         if let Some(m) = (other.id != 0).then(|| self.holder(i, Hold::Item(other.id))).flatten() {
                             return Err(Why { msg: format!("THE {} IS IN THE WAY {}.", name(other.good()), self.place_name(*to)), on: Some(m) });
+                        }
+                        // One waiting at a vine's foot stays there, not shoved aside: do something
+                        // else meanwhile.
+                        if !other.locked && self.world.vine_end(to.0, to.1).is_some() {
+                            return Err(Why::world(self.in_the_way(*to, o)));
                         }
                     }
                     wants.push(Want::Tile(*to));
@@ -445,12 +459,18 @@ impl Game {
         if !gave_up.is_empty() {
             return Some(Why::world(gave_up.clone()));
         }
-        Some(root_why.or(why).unwrap_or_else(|| Why::world("NOTHING TO DO.")))
+        // Nothing wanted: its goods already lie where they go. Where that's a full vine's foot,
+        // say so, since what's holding it up is far off at its head.
+        let full = || goals.iter().find_map(|g| match g {
+            Goal::Move { to, .. } => self.world.vine_end(to.0, to.1).filter(|&(_, head)| !head).and_then(|(l, _)| self.vine_full(l)),
+            _ => None,
+        });
+        Some(root_why.or(why).unwrap_or_else(|| Why::world(full().unwrap_or_else(|| "NOTHING TO DO.".into()))))
     }
 
     /// A loop with nothing to do keeps off the tiles where goods come and go: where its own loop
     /// takes or puts them, where a plant sets out its harvest, a workshop its products, a bin its
-    /// stock. Standing there it could be what holds up the very thing it's waiting for. It steps
+    /// stock, a vine takes and sets down what it carries. Standing there it could be what holds up the very thing it's waiting for. It steps
     /// onto a free tile beside it that isn't one of those, if there is one.
     fn keep_off_where_goods_go(&mut self, i: usize, sfx: &mut Vec<Sfx>) {
         let here = (self.monsters[i].x, self.monsters[i].y);
@@ -459,6 +479,9 @@ impl Game {
         busy.extend(self.world.plants.iter().filter_map(|p| p.drop.map(|(t, _)| t)));
         busy.extend(self.world.shops.iter().flat_map(|s| s.outs.iter().copied()));
         busy.extend(self.world.bins.iter().filter_map(|b| b.mouth));
+        // A vine's foot and head, where goods are set for it and set down by it (standing on its
+        // head stops it).
+        busy.extend(self.world.lifts.iter().flat_map(|l| [l.foot, l.top]));
         if !busy.contains(&here) {
             return;
         }

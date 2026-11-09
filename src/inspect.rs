@@ -203,7 +203,12 @@ pub fn card(g: &Game, k: usize) -> Card {
         return Card::one(format!("THE GATE TO {}", g.world.gates[k].province), lines, (fx, fy));
     }
     if let Some(i) = g.world.item_at(fx, fy) {
-        return item_card(g, &g.world.items[i].data, (fx, fy), c);
+        let mut card = item_card(g, &g.world.items[i].data, (fx, fy), c);
+        // On a vine, or at one of its ends: what the vine does with it.
+        if let Some(l) = vine_line(g, (fx, fy)) {
+            card.pages[0].push(l);
+        }
+        return card;
     }
     if g.world.tile(fx, fy) == Tile::Peg {
         if let Some(card) = town_tool_card(g, (fx, fy)) {
@@ -215,6 +220,9 @@ pub fn card(g: &Game, k: usize) -> Card {
             Some(n) => worker_card(g, o, n),
             None => monster_card(g, o),
         };
+    }
+    if let Some((l, _)) = g.world.vine_end(fx, fy) {
+        return vine_card(g, l, (fx, fy));
     }
     if let Some((_, prop)) = g.world.prop_at(fx, fy) {
         return prop_card(g, prop, (fx, fy));
@@ -307,7 +315,73 @@ fn worker_card(g: &Game, j: usize, n: usize) -> Card {
 }
 
 /// Scenery: what it is, and what goes into the real thing it stands for.
+/// "DOWN THE CLIFF TO BELLOWS": the way vine `l` carries, and where to when its head is in
+/// another place than its foot.
+fn vine_way(g: &Game, l: usize) -> String {
+    let lift = &g.world.lifts[l];
+    let way = match lift.dir {
+        Dir::Up => "UP THE CLIFF",
+        Dir::Down => "DOWN THE CLIFF",
+        _ => "OVER THE CLIFF",
+    };
+    let (from, to) = (crate::world::area_name(lift.foot.0, lift.foot.1), crate::world::area_name(lift.top.0, lift.top.1));
+    if from == to { way.to_string() } else { format!("{way} TO {to}") }
+}
+
+/// A vine: where it carries goods, that it carries anything in turn, what's on it, and what
+/// holds it up.
+fn vine_card(g: &Game, l: usize, at: (i32, i32)) -> Card {
+    let lift = &g.world.lifts[l];
+    let mut lines = vec![
+        line(format!("IT CARRIES WHATEVER IS SET AT ITS FOOT {}.", vine_way(g, l)), TEXT),
+        line("ANYTHING, IN TURN: A GOOD NOBODY TAKES FROM ITS HEAD HOLDS UP THE REST.", TEXT_DIM),
+    ];
+    // What it's carrying, by good, in the order they ride.
+    let mut riding: Vec<(String, usize)> = Vec::new();
+    for &(x, y) in &lift.vine {
+        if let Some(k) = g.world.item_at(x, y) {
+            let name = g.good_name(g.world.items[k].good());
+            match riding.iter_mut().find(|(n, _)| *n == name) {
+                Some((_, n)) => *n += 1,
+                None => riding.push((name, 1)),
+            }
+        }
+    }
+    let said: Vec<String> = riding.iter().map(|(name, n)| if *n == 1 { crate::recipes::one(name) } else { crate::recipes::several(*n, name) }).collect();
+    lines.push(if said.is_empty() { line("NOTHING ON IT NOW.", TEXT_DIM) } else { line(format!("CARRYING {}.", crate::recipes::and_list(&said)), TEXT) });
+    // Full, or the next waiting in its last cradle for its head to clear.
+    let last = *lift.vine.last().expect("a vine has tiles");
+    if let Some(full) = g.vine_full(l) {
+        lines.push(line(full, TEXT_WARN).icon(Icon::Warn));
+    } else if let Some(why) = g.vine_head_taken(l).filter(|_| g.world.item_at(last.0, last.1).is_some()) {
+        lines.push(line(format!("HELD UP: {why}."), TEXT_WARN).icon(Icon::Warn));
+    }
+    Card::one(format!("THE {}", lift.name), lines, at)
+}
+
+/// What a vine does with a good on it or at one of its ends, said on the good's card.
+fn vine_line(g: &Game, (x, y): (i32, i32)) -> Option<Line> {
+    if let Some(l) = g.world.vine_over(x, y) {
+        return Some(line(format!("RIDING THE {} {}.", g.world.lifts[l].name, vine_way(g, l)), TEXT_DIM));
+    }
+    let (l, head) = g.world.vine_end(x, y)?;
+    let lift = &g.world.lifts[l];
+    if head {
+        let last = *lift.vine.last().expect("a vine has tiles");
+        let behind = g.world.item_at(last.0, last.1).is_some();
+        return Some(line(format!("SET DOWN BY THE {}.{}", lift.name, if behind { " WHAT'S BEHIND IT WAITS UNTIL IT'S TAKEN." } else { "" }), TEXT_DIM));
+    }
+    Some(match g.vine_full(l) {
+        Some(full) => line(full, TEXT_WARN).icon(Icon::Warn),
+        None => line(format!("THE {} TAKES IT NEXT, {}.", lift.name, vine_way(g, l)), TEXT_DIM),
+    })
+}
+
 fn prop_card(g: &Game, prop: Prop, at: (i32, i32)) -> Card {
+    // A vine's own tiles: the vine.
+    if let Some(l) = g.world.vine_over(at.0, at.1) {
+        return vine_card(g, l, at);
+    }
     let k = prop.kind();
     // A choice board says what it says, and what it chooses between.
     if let Some(s) = g.world.choice_at(at.0, at.1) {

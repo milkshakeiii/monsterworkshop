@@ -764,6 +764,27 @@ impl Game {
         }
     }
 
+    /// What has vine `l`'s head taken, said of the vine: someone standing on it, or a good nobody
+    /// has taken from it yet. None while its head is clear.
+    pub(crate) fn vine_head_taken(&self, l: usize) -> Option<String> {
+        let (x, y) = self.world.lifts[l].top;
+        if let Some(m) = self.monster_at(x, y) {
+            return Some(format!("{} IS STANDING AT ITS HEAD", self.monsters[m].name));
+        }
+        let k = self.world.item_at(x, y)?;
+        Some(format!("NOBODY HAS TAKEN THE {} FROM ITS HEAD", self.good_name(self.world.items[k].good())))
+    }
+
+    /// Vine `l` full, and why: every cradle holds a good and its head is taken, so what's set at
+    /// its foot waits there. "THE ORE VINE IS FULL: NOBODY HAS TAKEN THE COPPER ORE FROM ITS HEAD."
+    pub(crate) fn vine_full(&self, l: usize) -> Option<String> {
+        let lift = &self.world.lifts[l];
+        if !lift.vine.iter().all(|&(x, y)| self.world.item_at(x, y).is_some()) {
+            return None;
+        }
+        self.vine_head_taken(l).map(|why| format!("THE {} IS FULL: {why}.", lift.name))
+    }
+
     /// The town's supplies set out a fresh good wherever theirs has been taken, after a while:
     /// out of the shed or wall beside it, if there is one, as a bin pushes goods out of its chute.
     fn tick_supplies(&mut self) {

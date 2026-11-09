@@ -949,5 +949,19 @@ fn export_screenshots(dir: &Path) {
         ng.update(&[]);
     }
     shot(&ng, "71_singing_at_work.png");
+    // The ore vine full (2026-11-07): its card at its foot in the Copper Cut, and the ore waiting
+    // at its head in Bellows, each screen in its own palette.
+    let mut vg = Game::new();
+    let ore = vg.world.lifts.iter().find(|l| l.name == "ORE VINE").expect("the ore vine").clone();
+    for &(x, y) in ore.vine.iter().chain([&ore.top]) {
+        vg.world.items.push(world::Item::new(x, y, econ::plain(&vg.data, "copper_ore", "copper_ore")));
+    }
+    for (at, facing, name) in [((ore.foot.0 - 1, ore.foot.1), game::Dir::Right, "72_ore_vine_full.png"), ((ore.top.0 + 1, ore.top.1), game::Dir::Left, "73_ore_at_the_vine_head.png")] {
+        (vg.monsters[0].x, vg.monsters[0].y, vg.monsters[0].facing) = (at.0, at.1, facing);
+        (vg.monsters[0].bubble, vg.communes[0].inspecting) = (None, true);
+        let hills = palette::build(vg.world.style_at(at.0, at.1));
+        render::draw(&vg, 0, &sprites, &mut fb);
+        fb.save_png(&dir.join(name), &hills, &hills, 0);
+    }
     println!("exported screenshots to {} ({} fabric stored)", dir.display(), g.cloth_stored());
 }
